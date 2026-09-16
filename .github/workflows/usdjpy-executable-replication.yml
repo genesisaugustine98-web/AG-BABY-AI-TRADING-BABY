@@ -1,0 +1,78 @@
+name: USDJPY executable-data replication
+
+on:
+  push:
+    paths:
+      - ".github/workflows/usdjpy-executable-replication.yml"
+      - "scripts/replicate_usdjpy_on_dukascopy.py"
+      - "scripts/backfill_h10_release_pages.py"
+  workflow_dispatch:
+
+jobs:
+  replicate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Acquire validated H.10 release archive
+        run: |
+          python scripts/backfill_h10_release_pages.py \
+            --from-year 2011 \
+            --to-year 2026 \
+            --output-dir artifacts/h10/vintages
+
+      - name: Verify H.10 archive
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("artifacts/h10/vintages/archive_manifest.json")
+          d = json.loads(p.read_text())
+          assert d["revision_status"] == "point_in_time_release_page"
+          assert d["release_count"] >= 700
+          print({"release_count": d["release_count"], "candidate_date_count": d["candidate_date_count"]})
+          PY
+
+      - name: Replicate against executable bid/ask ticks
+        run: |
+          python scripts/replicate_usdjpy_on_dukascopy.py \
+            --h10-dir artifacts/h10/vintages \
+            --from-date 2011-01-01 \
+            --to-date 2026-09-30 \
+            --latencies 0,30,60,300 \
+            --slippage-bps 0,1,2,5 \
+            --output-dir artifacts/usdjpy_executable
+
+      - name: Validate executable report
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("artifacts/usdjpy_executable/report.json")
+          d = json.loads(p.read_text())
+          assert d["experiment"].startswith("usdjpy_h10_high_vol_5release_momentum_executable")
+          assert d["high_regime_signal_count"] > 0
+          assert len(d["results"]) == 16
+          completed = [r for r in d["results"] if r["summary"]["n"] > 0]
+          assert completed, "No executable observations were recovered"
+          print({
+              "signal_count": d["high_regime_signal_count"],
+              "configs": len(d["results"]),
+              "configs_with_trades": len(completed),
+          })
+          PY
+
+      - name: Upload executable replication artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: usdjpy-executable-replication
+          path: artifacts/usdjpy_executable
+          if-no-files-found: error
+          retention-days: 30
