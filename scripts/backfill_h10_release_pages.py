@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
 import re
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, timedelta, time, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -14,6 +15,8 @@ from zoneinfo import ZoneInfo
 BASE = "https://www.federalreserve.gov/releases/h10/"
 NY = ZoneInfo("America/New_York")
 RELEASE_TIME = time(16, 15)
+MAX_WORKERS = 8
+FETCH_TIMEOUT_SECONDS = 15
 
 
 class H10Parser(HTMLParser):
@@ -54,7 +57,7 @@ class H10Parser(HTMLParser):
 
 def fetch(url: str) -> bytes:
     req = Request(url, headers={"User-Agent": "AG-BABY-research/1.0"})
-    with urlopen(req, timeout=30) as resp:
+    with urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
         return resp.read()
 
 
@@ -62,20 +65,23 @@ def release_at(release_date: date) -> datetime:
     return datetime.combine(release_date, RELEASE_TIME, tzinfo=NY).astimezone(timezone.utc)
 
 
-def discover_release_dates(start_year: int, end_year: int) -> list[date]:
+def candidate_release_dates(start_year: int, end_year: int) -> list[date]:
+    """Enumerate Mondays plus Tuesdays for Monday-holiday release shifts.
+
+    H.10 is normally released Monday at 4:15 p.m. Eastern Time; when a Monday
+    is a federal holiday, the weekly statistical release moves to Tuesday.
+    Fetching both weekdays is simpler and safer than assuming an index page
+    enumerates every historical dated release URL.
+    """
+    start = date(start_year, 1, 1)
+    end = date(end_year, 12, 31)
+    cursor = start
     dates: list[date] = []
-    for year in range(start_year, end_year + 1):
-        url = f"{BASE}{year}/"
-        try:
-            html = fetch(url).decode("utf-8", errors="replace")
-        except Exception:
-            continue
-        for match in re.finditer(r"/releases/h10/(\d{8})/", html, flags=re.I):
-            try:
-                dates.append(datetime.strptime(match.group(1), "%Y%m%d").date())
-            except ValueError:
-                continue
-    return sorted(set(dates))
+    while cursor <= end:
+        if cursor.weekday() in (0, 1):
+            dates.append(cursor)
+        cursor += timedelta(days=1)
+    return dates
 
 
 def _date_header(value: str) -> tuple[int, int] | None:
@@ -148,26 +154,39 @@ def parse_release(html: str, release_date: date) -> list[dict[str, object]]:
     return observations
 
 
+def _acquire_release(release_date: date) -> tuple[date, bytes, list[dict[str, object]]] | None:
+    url = f"{BASE}{release_date:%Y%m%d}/"
+    try:
+        raw = fetch(url)
+    except Exception:
+        return None
+    parsed = parse_release(raw.decode("utf-8", errors="replace"), release_date)
+    if not parsed:
+        return None
+    return release_date, raw, parsed
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--from-year", type=int, default=2009)
     p.add_argument("--to-year", type=int, default=date.today().year)
     p.add_argument("--output-dir", default="artifacts/h10/vintages")
     args = p.parse_args()
+    if args.from_year > args.to_year:
+        raise SystemExit("from-year must be <= to-year")
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
     manifests: list[dict[str, object]] = []
-    for release_date in discover_release_dates(args.from_year, args.to_year):
-        url = f"{BASE}{release_date:%Y%m%d}/"
-        try:
-            raw = fetch(url)
-        except Exception:
-            continue
+
+    candidates = candidate_release_dates(args.from_year, args.to_year)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(_acquire_release, day) for day in candidates]
+        results = [future.result() for future in as_completed(futures)]
+
+    for result in sorted((row for row in results if row is not None), key=lambda row: row[0]):
+        release_date, raw, observations = result
         raw_sha = hashlib.sha256(raw).hexdigest()
-        observations = parse_release(raw.decode("utf-8", errors="replace"), release_date)
-        if not observations:
-            continue
         stem = release_date.isoformat()
         (out / f"h10_release_{stem}.html").write_bytes(raw)
         with (out / f"h10_release_{stem}.jsonl").open("w", encoding="utf-8") as handle:
@@ -176,7 +195,7 @@ def main() -> int:
         manifests.append({
             "release_date": stem,
             "release_at_utc": release_at(release_date).isoformat(),
-            "source_url": url,
+            "source_url": f"{BASE}{release_date:%Y%m%d}/",
             "raw_sha256": raw_sha,
             "observation_count": len(observations),
             "revision_status": "point_in_time_release_page",
@@ -189,9 +208,14 @@ def main() -> int:
         "to_year": args.to_year,
         "revision_status": "point_in_time_release_page",
         "release_count": len(manifests),
+        "candidate_date_count": len(candidates),
         "releases": manifests,
     }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"release_count": len(manifests), "output_dir": str(out)}))
+    print(json.dumps({
+        "candidate_date_count": len(candidates),
+        "release_count": len(manifests),
+        "output_dir": str(out),
+    }, sort_keys=True))
     return 0
 
 
