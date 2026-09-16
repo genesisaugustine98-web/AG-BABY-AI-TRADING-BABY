@@ -6,9 +6,9 @@ from apps.research.evidence_engine import classify_evidence, compute_stats, cost
 def test_compute_stats_and_drawdown():
     stats = compute_stats([Decimal("0.10"), Decimal("-0.05"), Decimal("0.02")])
     assert stats.n == 3
-    assert stats.mean_net == Decimal("0.02333333333333333333333333333")
+    assert stats.mean_net == sum([Decimal("0.10"), Decimal("-0.05"), Decimal("0.02")], Decimal("0")) / Decimal("3")
     assert stats.median_net == Decimal("0.02")
-    assert stats.win_rate_net == Decimal("0.6666666666666666666666666667")
+    assert stats.win_rate_net == Decimal("2") / Decimal("3")
     assert stats.cumulative_net > Decimal("0")
     assert stats.max_drawdown < Decimal("0")
 
