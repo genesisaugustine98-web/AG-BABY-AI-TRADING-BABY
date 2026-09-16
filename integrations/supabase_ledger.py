@@ -6,7 +6,7 @@ import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -65,11 +65,11 @@ def build_event(
 
 
 def publish_event(event: IntegrationEvent, *, timeout_seconds: int = 10) -> dict[str, Any]:
-    """Publish using the server-side service-role key. Never use this in a browser."""
+    """Publish with a server-side Supabase Secret key. Never use this in a browser."""
     url = os.getenv("SUPABASE_URL", "").rstrip("/")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    key = os.getenv("SUPABASE_SECRET_KEY", "")
     if not url or not key:
-        raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required")
+        raise RuntimeError("SUPABASE_URL and SUPABASE_SECRET_KEY are required")
     if event.environment == "live":
         raise RuntimeError("live integration publishing is disabled")
 
