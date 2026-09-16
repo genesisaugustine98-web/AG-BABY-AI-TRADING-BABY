@@ -25,12 +25,12 @@ def test_momentum_and_reversal_are_opposites():
     reversal = run_reference_backtest(bars, instrument="EURUSD_REFERENCE", rule="reversal")
     assert momentum[0].signal == 1
     assert reversal[0].signal == -1
-    assert momentum[0].gross_return == Decimal("-0.009900990099009900990099009900")
-    assert reversal[0].gross_return == Decimal("0.009900990099009900990099009900")
+    assert momentum[0].gross_return == Decimal("1.00") / Decimal("1.01") - Decimal("1")
+    assert reversal[0].gross_return == Decimal("1") - Decimal("1.00") / Decimal("1.01")
 
 
 def test_unavailable_current_observation_is_skipped():
-    bars = [obs(1, "1.0000", usable_lag_days=1), obs(2, "1.0100"), obs(3, "1.0200")]
+    bars = [obs(1, "1.0000", usable_lag_days=2), obs(2, "1.0100"), obs(3, "1.0200")]
     trades = run_reference_backtest(bars, instrument="EURUSD_REFERENCE", rule="momentum")
     assert len(trades) == 0
 
