@@ -47,6 +47,23 @@ def deterministic_client_order_id(intent: TradeIntent) -> str:
     return f"AGDEMO-{digest}"
 
 
+def lifecycle_state(result: SubmissionResult, requested_quantity: Decimal) -> OrderState:
+    """Map broker outcome plus filled quantity to an explicit internal state."""
+    if result.outcome == "UNKNOWN":
+        return OrderState.UNKNOWN
+    if result.outcome == "REJECTED":
+        return OrderState.REJECTED
+    if result.outcome != "ACCEPTED":
+        raise ValueError(f"unsupported broker outcome: {result.outcome}")
+    if result.filled_quantity < 0 or result.filled_quantity > requested_quantity:
+        raise ValueError("filled quantity outside requested quantity")
+    if result.filled_quantity == requested_quantity:
+        return OrderState.FILLED
+    if result.filled_quantity > 0:
+        return OrderState.PARTIAL
+    return OrderState.ACCEPTED
+
+
 class DemoOrderLifecycle:
     """Submit once, then require reconciliation for ambiguity."""
 
@@ -54,7 +71,7 @@ class DemoOrderLifecycle:
         self.submission = submission
         self.truth = truth
 
-    def submit_once(self, intent: TradeIntent) -> tuple[str, SubmissionResult]:
+    def submit_once(self, intent: TradeIntent) -> tuple[str, SubmissionResult, OrderState]:
         client_order_id = deterministic_client_order_id(intent)
         machine = OrderStateMachine(OrderState.AUTHORIZED)
         machine.transition(OrderState.SUBMITTING)
@@ -69,14 +86,10 @@ class DemoOrderLifecycle:
                 limit_price=intent.limit_price,
             )
         )
-        if result.outcome == "ACCEPTED":
-            return client_order_id, result
-        if result.outcome == "REJECTED":
-            return client_order_id, result
-        if result.outcome == "UNKNOWN":
+        state = lifecycle_state(result, intent.quantity)
+        if state == OrderState.UNKNOWN:
             machine.transition(OrderState.UNKNOWN)
-            return client_order_id, result
-        raise ValueError(f"unsupported broker outcome: {result.outcome}")
+        return client_order_id, result, state
 
     def reconcile_unknown(self, client_order_id: str) -> SubmissionResult:
         result = self.truth.lookup_by_client_order_id(client_order_id)
