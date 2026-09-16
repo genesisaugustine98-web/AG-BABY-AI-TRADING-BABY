@@ -8,16 +8,22 @@ from packages.execution_ledger import BrokerOrderTruth, InternalOrderTruth
 
 @dataclass
 class Truth:
-    orders: tuple[InternalOrderTruth, ...] = ()
-    positions: tuple[BrokerPositionTruth, ...] = ()
-    def active_orders(self): return self.orders
-    def positions(self): return self.positions
+    orders_data: tuple[InternalOrderTruth, ...] = ()
+    positions_data: tuple[BrokerPositionTruth, ...] = ()
+
+    def active_orders(self):
+        return self.orders_data
+
+    def positions(self):
+        return self.positions_data
 
 
 @dataclass
 class FakeAdapter:
     snapshot_value: BrokerSnapshot
-    def snapshot(self): return self.snapshot_value
+
+    def snapshot(self):
+        return self.snapshot_value
 
 
 @dataclass
@@ -25,15 +31,21 @@ class FakeStore:
     snapshots: list = field(default_factory=list)
     outcomes: list = field(default_factory=list)
     frozen: bool | None = None
-    def record_snapshot(self, snapshot): self.snapshots.append(snapshot)
-    def record_outcome(self, outcome): self.outcomes.append(outcome)
-    def set_frozen(self, frozen): self.frozen = frozen
+
+    def record_snapshot(self, snapshot):
+        self.snapshots.append(snapshot)
+
+    def record_outcome(self, outcome):
+        self.outcomes.append(outcome)
+
+    def set_frozen(self, frozen):
+        self.frozen = frozen
 
 
 def test_clean_cycle_unfreezes_only_after_match():
     internal = Truth(
-        orders=(InternalOrderTruth("o1", "c1", "USDJPY", "FILLED", Decimal("1")),),
-        positions=(BrokerPositionTruth("USDJPY", Decimal("1")),),
+        orders_data=(InternalOrderTruth("o1", "c1", "USDJPY", "FILLED", Decimal("1")),),
+        positions_data=(BrokerPositionTruth("USDJPY", Decimal("1")),),
     )
     broker = BrokerSnapshot(
         orders=(BrokerOrderTruth("b1", "c1", "USDJPY", "FILLED", Decimal("1")),),
@@ -49,7 +61,7 @@ def test_clean_cycle_unfreezes_only_after_match():
 
 
 def test_drift_freezes():
-    internal = Truth(positions=(BrokerPositionTruth("USDJPY", Decimal("1")),))
+    internal = Truth(positions_data=(BrokerPositionTruth("USDJPY", Decimal("1")),))
     broker = BrokerSnapshot(orders=(), positions=(), captured_at="2026-09-16T18:01:00+00:00")
     store = FakeStore()
     result = ReconciliationWorker(FakeAdapter(broker), internal, store).run_once()
@@ -59,7 +71,9 @@ def test_drift_freezes():
 
 def test_adapter_failure_never_unfreezes():
     class BrokenAdapter:
-        def snapshot(self): raise RuntimeError("broker unavailable")
+        def snapshot(self):
+            raise RuntimeError("broker unavailable")
+
     store = FakeStore(frozen=True)
     try:
         ReconciliationWorker(BrokenAdapter(), Truth(), store).run_once()
