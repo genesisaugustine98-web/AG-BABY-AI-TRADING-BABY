@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "minimum_sample_n": 30,
+  "minimum_mean_net": "0",
+  "require_positive_cumulative": true,
+  "required_splits_for_promotion": ["development", "validation", "holdout"],
+  "holdout_policy": "inspect_only_after_selection_lock",
+  "dataset_revision_status_allowed_for_promotion": ["point_in_time_vintage"],
+  "execution_grade_required_for_live": true,
+  "notes": [
+    "These thresholds are research gates, not claims about statistical significance.",
+    "No holdout tuning is permitted.",
+    "Revised historical H.10 data cannot qualify as point-in-time vintage evidence."
+  ]
+}
