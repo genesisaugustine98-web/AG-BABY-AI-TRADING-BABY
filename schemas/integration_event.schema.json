@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/genesisaugustine98-web/AG-BABY-AI-TRADING-BABY/blob/main/schemas/integration_event.schema.json",
+  "title": "Institutional FX Edge Integration Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repo",
+    "commit_sha",
+    "integration_name",
+    "run_id",
+    "correlation_id",
+    "environment",
+    "status",
+    "started_at",
+    "completed_at"
+  ],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "repo": {"type": "string"},
+    "commit_sha": {"type": "string"},
+    "integration_name": {"type": "string"},
+    "run_id": {"type": "string"},
+    "correlation_id": {"type": "string"},
+    "environment": {"enum": ["research", "paper", "demo", "live"]},
+    "status": {"enum": ["queued", "running", "success", "failed", "blocked"]},
+    "started_at": {"type": "string", "format": "date-time"},
+    "completed_at": {"type": "string", "format": "date-time"},
+    "artifact_uri": {"type": ["string", "null"]},
+    "failure_class": {"type": ["string", "null"]}
+  }
+}
