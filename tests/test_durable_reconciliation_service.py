@@ -101,3 +101,23 @@ def test_drift_cannot_reopen_execution():
     assert result.status == "FREEZE"
     assert service.trading_permitted is False
     assert store.frozen is True
+
+
+def test_duplicate_broker_order_identity_cannot_open_execution():
+    store = Store(frozen=True)
+    ambiguous = BrokerSnapshot(
+        orders=(
+            BrokerOrderTruth("broker-1", "AG-1", "USDJPY", "ACCEPTED", Decimal("1")),
+            BrokerOrderTruth("broker-2", "AG-1", "USDJPY", "ACCEPTED", Decimal("1")),
+        ),
+        positions=(BrokerPositionTruth("USDJPY", Decimal("1")),),
+        captured_at="2026-09-16T19:02:00+00:00",
+    )
+    worker = ReconciliationWorker(Adapter(ambiguous), store, store)
+    service = DurableReconciliationService(worker)
+    service.startup()
+    result = service.reconcile_once()
+    assert result.status == "FREEZE"
+    assert service.trading_permitted is False
+    assert store.frozen is True
+    assert "duplicate_broker_client_order_id:AG-1" in store.frozen_reasons[-1]
