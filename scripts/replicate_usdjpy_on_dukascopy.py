@@ -10,8 +10,6 @@ import argparse
 import hashlib
 import json
 import lzma
-import math
-import re
 import struct
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -58,17 +56,11 @@ class ReleaseRow:
 
 
 def release_at(release_date: date) -> datetime:
-    return datetime.combine(release_date, datetime.min.time(), tzinfo=NY).replace(
-        hour=16, minute=15
-    ).astimezone(timezone.utc)
-
-
-def _float_decimal(value: str) -> Decimal:
-    return Decimal(value.strip())
+    local = datetime(release_date.year, release_date.month, release_date.day, 16, 15, tzinfo=NY)
+    return local.astimezone(timezone.utc)
 
 
 def load_h10_rows(root: Path) -> dict[date, Decimal]:
-    """Load USDJPY H.10 values from the validated dated-release JSONL archive."""
     out: dict[date, Decimal] = {}
     for path in sorted(root.glob("h10_release_*.jsonl")):
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -76,7 +68,7 @@ def load_h10_rows(root: Path) -> dict[date, Decimal]:
             if row.get("instrument") != "USDJPY_REFERENCE":
                 continue
             day = date.fromisoformat(str(row["event_time"])[:10])
-            out[day] = _float_decimal(str(row["value"]))
+            out[day] = Decimal(str(row["value"]))
     return out
 
 
@@ -95,21 +87,17 @@ def _median(values: list[Decimal]) -> Decimal | None:
     ordered = sorted(values)
     n = len(ordered)
     mid = n // 2
-    if n % 2:
-        return ordered[mid]
-    return (ordered[mid - 1] + ordered[mid]) / Decimal("2")
+    return ordered[mid] if n % 2 else (ordered[mid - 1] + ordered[mid]) / Decimal("2")
 
 
 def build_candidate_rows(values: dict[date, Decimal], *, vol_window: int = 20, threshold_window: int = 104) -> list[ReleaseRow]:
     dates = sorted(values)
-    rows: list[ReleaseRow] = []
     returns_by_date: dict[date, Decimal] = {}
     for i in range(1, len(dates)):
         prev = values[dates[i - 1]]
         cur = values[dates[i]]
-        if prev <= 0 or cur <= 0:
-            continue
-        returns_by_date[dates[i]] = (cur / prev).ln()
+        if prev > 0 and cur > 0:
+            returns_by_date[dates[i]] = (cur / prev).ln()
 
     vols_by_date: dict[date, Decimal] = {}
     for i, day in enumerate(dates):
@@ -118,6 +106,7 @@ def build_candidate_rows(values: dict[date, Decimal], *, vol_window: int = 20, t
         if vol is not None:
             vols_by_date[day] = vol
 
+    rows: list[ReleaseRow] = []
     for i, day in enumerate(dates):
         if i == 0:
             continue
@@ -174,10 +163,9 @@ def decode_hour(raw: bytes, day: date, hour_utc: int) -> list[Tick]:
     ticks: list[Tick] = []
     for offset in range(0, len(data), RECORD.size):
         ms, ask_raw, bid_raw, ask_volume, bid_volume = RECORD.unpack_from(data, offset)
-        ts = start + timedelta(milliseconds=ms)
         ticks.append(
             Tick(
-                timestamp=ts,
+                timestamp=start + timedelta(milliseconds=ms),
                 ask=Decimal(ask_raw) / Decimal(JPY_SCALE),
                 bid=Decimal(bid_raw) / Decimal(JPY_SCALE),
                 ask_volume=ask_volume,
@@ -193,50 +181,55 @@ def fetch_release_tick(day: date, timestamp: datetime) -> tuple[Tick | None, str
         raw = fetch_bytes(url)
     except Exception:
         return None, url, None
-    if not raw:
-        return None, url, hashlib.sha256(raw).hexdigest()
-    ticks = decode_hour(raw, day, timestamp.hour)
-    for tick in ticks:
+    raw_sha = hashlib.sha256(raw).hexdigest()
+    for tick in decode_hour(raw, day, timestamp.hour):
         if tick.timestamp >= timestamp:
-            return tick, url, hashlib.sha256(raw).hexdigest()
-    return None, url, hashlib.sha256(raw).hexdigest()
+            return tick, url, raw_sha
+    return None, url, raw_sha
 
 
 def _split_dates(rows: list[ReleaseRow], start: date, end: date) -> list[ReleaseRow]:
     return [row for row in rows if start <= row.release_date <= end]
 
 
-def execute_replication(rows: list[ReleaseRow], *, latency_seconds: int, extra_slippage_bps: Decimal) -> list[dict[str, object]]:
+def _quote_targets(rows: list[ReleaseRow], latency_seconds: int) -> list[tuple[date, datetime]]:
     active = [r for r in rows if r.high_regime and r.signal != 0]
-    by_date = {r.release_date: r for r in rows}
     tasks: dict[date, datetime] = {}
-    for row in active:
-        target_idx = rows.index(row) + 5
-        if target_idx >= len(rows):
+    for idx, row in enumerate(rows):
+        if not (row.high_regime and row.signal != 0) or idx + 5 >= len(rows):
             continue
-        target = rows[target_idx]
+        target = rows[idx + 5]
         tasks[row.release_date] = row.release_at + timedelta(seconds=latency_seconds)
         tasks[target.release_date] = target.release_at + timedelta(seconds=latency_seconds)
+    return sorted(tasks.items())
 
+
+def load_quotes(rows: list[ReleaseRow], *, latency_seconds: int) -> tuple[dict[date, Tick], dict[str, dict[str, str | None]]]:
+    tasks = _quote_targets(rows, latency_seconds)
     quotes: dict[date, Tick] = {}
     provenance: dict[str, dict[str, str | None]] = {}
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_map = {
-            executor.submit(fetch_release_tick, day, ts): (day, ts)
-            for day, ts in tasks.items()
-        }
+        future_map = {executor.submit(fetch_release_tick, day, ts): (day, ts) for day, ts in tasks}
         for future in as_completed(future_map):
             day, _ = future_map[future]
             tick, url, raw_sha = future.result()
             provenance[str(day)] = {"url": url, "raw_sha256": raw_sha}
             if tick is not None:
                 quotes[day] = tick
+    return quotes, provenance
 
-    rows_out: list[dict[str, object]] = []
+
+def execute_replication(
+    rows: list[ReleaseRow],
+    *,
+    quotes: dict[date, Tick],
+    provenance: dict[str, dict[str, str | None]],
+    extra_slippage_bps: Decimal,
+) -> list[dict[str, object]]:
     slippage_rate = extra_slippage_bps / Decimal("10000")
-    for row in active:
-        idx = rows.index(row)
-        if idx + 5 >= len(rows):
+    records: list[dict[str, object]] = []
+    for idx, row in enumerate(rows):
+        if not row.high_regime or row.signal == 0 or idx + 5 >= len(rows):
             continue
         target = rows[idx + 5]
         entry = quotes.get(row.release_date)
@@ -251,9 +244,7 @@ def execute_replication(rows: list[ReleaseRow], *, latency_seconds: int, extra_s
             entry_price = entry.bid * (Decimal("1") - slippage_rate)
             exit_price = exit_tick.ask * (Decimal("1") + slippage_rate)
             ret = entry_price / exit_price - Decimal("1")
-        spread_entry = entry.ask - entry.bid
-        spread_exit = exit_tick.ask - exit_tick.bid
-        rows_out.append(
+        records.append(
             {
                 "entry_date": row.release_date.isoformat(),
                 "target_date": target.release_date.isoformat(),
@@ -266,14 +257,14 @@ def execute_replication(rows: list[ReleaseRow], *, latency_seconds: int, extra_s
                 "entry_ask": str(entry.ask),
                 "exit_bid": str(exit_tick.bid),
                 "exit_ask": str(exit_tick.ask),
-                "entry_spread": str(spread_entry),
-                "exit_spread": str(spread_exit),
+                "entry_spread": str(entry.ask - entry.bid),
+                "exit_spread": str(exit_tick.ask - exit_tick.bid),
                 "return": str(ret),
                 "provenance_entry": provenance.get(str(row.release_date), {}),
                 "provenance_exit": provenance.get(str(target.release_date), {}),
             }
         )
-    return rows_out
+    return records
 
 
 def summarize(records: list[dict[str, object]]) -> dict[str, object]:
@@ -304,17 +295,14 @@ def main() -> int:
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
     values = load_h10_rows(h10_dir)
-    rows = build_candidate_rows(values)
-    start = date.fromisoformat(args.from_date)
-    end = date.fromisoformat(args.to_date)
-    rows = _split_dates(rows, start, end)
+    rows = _split_dates(build_candidate_rows(values), date.fromisoformat(args.from_date), date.fromisoformat(args.to_date))
 
     all_results: list[dict[str, object]] = []
     for latency in [int(x) for x in args.latencies.split(",") if x.strip()]:
-        # Fetch quotes once per latency; timestamp changes with latency, so each must be separate.
+        quotes, provenance = load_quotes(rows, latency_seconds=latency)
         for slip_text in [x for x in args.slippage_bps.split(",") if x.strip()]:
             slip = Decimal(slip_text)
-            records = execute_replication(rows, latency_seconds=latency, extra_slippage_bps=slip)
+            records = execute_replication(rows, quotes=quotes, provenance=provenance, extra_slippage_bps=slip)
             all_results.append({
                 "latency_seconds": latency,
                 "extra_slippage_bps_per_side": str(slip),
