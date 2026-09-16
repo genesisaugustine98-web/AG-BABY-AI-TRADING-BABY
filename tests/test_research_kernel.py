@@ -27,10 +27,10 @@ def test_observation_quality_rejects_future_information():
 def test_point_in_time_never_uses_unavailable_data():
     items = [obs(100, 120), obs(110, 110), obs(90, 150)]
     result = point_in_time(items, 120)
-    assert [(x.event_time_ms, x.usable_at_ms) for x in result] == [(110, 110), (100, 120)]
+    assert [(x.event_time_ms, x.usable_at_ms) for x in result] == [(100, 120), (110, 110)]
 
 
-def test_replay_charges_turnover_costs():
+def test_replay_charges_entry_and_terminal_exit_costs():
     bars = [
         ReplayBar(1, Decimal("1.0000"), 0),
         ReplayBar(2, Decimal("1.0100"), 1),
@@ -45,6 +45,7 @@ def test_replay_charges_turnover_costs():
     assert result.observations == 3
     assert result.trades == 2
     assert result.turnover == Decimal("2")
+    assert result.total_cost == Decimal("0.0024")
     assert result.total_cost > Decimal("0")
     assert result.total_return < result.gross_return
 
