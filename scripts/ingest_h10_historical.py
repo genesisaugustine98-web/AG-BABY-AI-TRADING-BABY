@@ -1,9 +1,4 @@
-"""Reproducible historical H.10 acquisition with explicit release-vintage metadata.
-
-The Federal Reserve DDP permits date-range downloads. This script deliberately
-separates observation date from information availability: every downloaded batch
-is stamped with the actual H.10 publication timestamp supplied by the caller.
-"""
+"""Reproducible historical H.10 acquisition with explicit release-vintage metadata."""
 from __future__ import annotations
 
 import argparse
@@ -14,9 +9,9 @@ from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from apps.research.h10_ingest import parse_h10_daily_csv, h10_release_timestamp
+from apps.research.h10_ingest import h10_release_timestamp, parse_h10_daily_csv
 
-BASE_FORMAT_URL = "https://www.federalreserve.gov/datadownload/Format.aspx"
+BASE_DOWNLOAD_URL = "https://www.federalreserve.gov/datadownload/Download.aspx"
 H10_SERIES_PACKAGE = "60f32914ab61dfab590e0e470153e3ae"
 
 
@@ -30,7 +25,7 @@ def build_historical_url(start: date, end: date) -> str:
         "rel": "H10",
         "series": H10_SERIES_PACKAGE,
     }
-    return BASE_FORMAT_URL + "?" + urlencode(params)
+    return BASE_DOWNLOAD_URL + "?" + urlencode(params)
 
 
 def fetch_text(url: str, timeout_seconds: int = 30) -> str:
@@ -41,9 +36,9 @@ def fetch_text(url: str, timeout_seconds: int = 30) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--from-date", required=True, help="YYYY-MM-DD observation start")
-    parser.add_argument("--to-date", required=True, help="YYYY-MM-DD observation end")
-    parser.add_argument("--release-date", required=True, help="YYYY-MM-DD actual H.10 release date")
+    parser.add_argument("--from-date", required=True)
+    parser.add_argument("--to-date", required=True)
+    parser.add_argument("--release-date", required=True)
     parser.add_argument("--output-dir", default="artifacts/h10/historical")
     args = parser.parse_args()
 
