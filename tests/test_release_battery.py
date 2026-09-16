@@ -53,5 +53,5 @@ def test_release_backtest_uses_only_released_information_and_costs():
     )
     assert len(trades) == 2
     assert trades[0].signal == 1
-    assert trades[0].net_return == Decimal("0.01") - Decimal("0.001")
+    assert trades[0].net_return == (Decimal("1.02") / Decimal("1.01") - Decimal("1")) - Decimal("0.001")
     assert summarize_release_trades(trades)["n"] == 2
