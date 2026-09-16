@@ -1,0 +1,30 @@
+name: h10-research
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 23 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run fixed H.10 historical experiment
+        run: python scripts/run_h10_current_history_experiment.py
+      - name: Upload research artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: h10-research-report
+          path: |
+            artifacts/research/h10_current_history.csv
+            artifacts/research/h10_current_history_experiment.json
+          if-no-files-found: error
