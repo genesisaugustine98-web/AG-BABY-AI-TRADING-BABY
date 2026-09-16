@@ -21,8 +21,13 @@ def size_for_cash_risk(spec: InstrumentSpec, equity: Decimal, risk_fraction: Dec
     budget = equity * risk_fraction
     per_lot = cash_risk_per_lot(spec, stop_distance, quote_to_account=quote_to_account)
     raw_lots = budget / per_lot
-    clipped = min(max(raw_lots, spec.min_volume), spec.max_volume)
-    return floor_step(clipped, spec.volume_step)
+    # Never force the broker minimum when it would exceed the risk budget.
+    # Safe result is NO-SIZE / NO-TRADE; orchestration must handle that explicitly.
+    if raw_lots < spec.min_volume:
+        return D0
+    clipped = min(raw_lots, spec.max_volume)
+    sized = floor_step(clipped, spec.volume_step)
+    return sized if sized >= spec.min_volume else D0
 
 def verify_post_trade_risk(after: PortfolioState, max_gross: Decimal, max_drawdown: Decimal) -> bool:
     return (not after.frozen and after.gross_risk_fraction <= max_gross and after.account_drawdown_fraction <= max_drawdown)
