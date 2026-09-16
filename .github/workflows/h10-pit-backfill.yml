@@ -1,0 +1,65 @@
+name: H10 PIT backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_year:
+        description: "First H.10 release year to acquire"
+        required: true
+        default: "2009"
+      to_year:
+        description: "Last H.10 release year to acquire"
+        required: true
+        default: "2026"
+  schedule:
+    - cron: "15 3 1 * *"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Acquire dated H.10 release pages
+        run: |
+          python scripts/backfill_h10_release_pages.py \
+            --from-year "${{ inputs.from_year || '2009' }}" \
+            --to-year "${{ inputs.to_year || '2026' }}" \
+            --output-dir artifacts/h10/vintages
+
+      - name: Validate archive manifest
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("artifacts/h10/vintages/archive_manifest.json")
+          d = json.loads(p.read_text())
+          assert d["revision_status"] == "point_in_time_release_page"
+          assert d["release_count"] > 0, "No H.10 release pages acquired"
+          print(json.dumps({
+              "release_count": d["release_count"],
+              "from_year": d["from_year"],
+              "to_year": d["to_year"],
+          }, sort_keys=True))
+          PY
+
+      - name: Upload H.10 PIT archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: h10-pit-vintage-archive
+          path: artifacts/h10/vintages/
+          retention-days: 14
+          if-no-files-found: error
