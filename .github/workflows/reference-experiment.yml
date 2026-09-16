@@ -1,0 +1,53 @@
+name: reference-experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      development_end:
+        description: Development sample end date YYYY-MM-DD
+        required: true
+        default: '2018-12-31'
+      validation_end:
+        description: Validation sample end date YYYY-MM-DD
+        required: true
+        default: '2021-12-31'
+  workflow_run:
+    workflows: [h10-acquisition]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  experiment:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare deterministic fixture input
+        run: |
+          mkdir -p artifacts/research
+          cat > artifacts/research/reference_fixture.jsonl <<'EOF'
+          {"instrument":"EURUSD_REFERENCE","event_time":"2020-01-02T00:00:00+00:00","usable_at":"2020-01-06T21:15:00+00:00","value":"1.1189","source":"Federal Reserve Board H.10","source_version":"H10-release-2020-01-06","observation_id":"fixture-2020-01-02","execution_grade":false}
+          EOF
+      - name: Run fixed research grid smoke test
+        env:
+          DEVELOPMENT_END: ${{ inputs.development_end || '2018-12-31' }}
+          VALIDATION_END: ${{ inputs.validation_end || '2021-12-31' }}
+        run: >-
+          python scripts/run_reference_experiment.py
+          --input artifacts/research/reference_fixture.jsonl
+          --output artifacts/research/reference_experiment.json
+          --development-end "$DEVELOPMENT_END"
+          --validation-end "$VALIDATION_END"
+      - name: Upload experiment report
+        uses: actions/upload-artifact@v4
+        with:
+          name: reference-experiment-report
+          path: artifacts/research/reference_experiment.json
+          if-no-files-found: error
