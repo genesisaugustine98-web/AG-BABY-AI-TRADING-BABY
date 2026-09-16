@@ -1,0 +1,28 @@
+name: h10-acquisition
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 22 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  acquire:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch and normalize current H.10 release
+        run: python scripts/ingest_h10_current.py --output-dir artifacts/h10
+      - name: Upload H.10 snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: h10-current-snapshot
+          path: artifacts/h10/
+          if-no-files-found: error
