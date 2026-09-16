@@ -32,7 +32,7 @@ jobs:
 
           python - <<'PY'
           import os
-                   from integrations.supabase_ledger import build_event, publish_event
+          from integrations.supabase_ledger import build_event, publish_event
 
           run_id = os.environ.get("GITHUB_RUN_ID", "unknown")
           repo = os.environ["GITHUB_REPOSITORY"]
