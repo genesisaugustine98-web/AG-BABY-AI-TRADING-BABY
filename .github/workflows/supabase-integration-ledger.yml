@@ -1,0 +1,44 @@
+name: supabase-integration-ledger
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_SHA: ${{ github.sha }}
+      EXECUTION_ENV: research
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish lifecycle event when trusted credentials are configured
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "Supabase ledger secrets are not configured; skipping external publish safely."
+            exit 0
+          fi
+
+          python - <<'PY'
+          import os
+          from integrations.supabase_ledger import build_event, publish_event
+
+          event = build_event(
+              integration_name="github",
+              run_id=os.environ.get("GITHUB_RUN_ID", "unknown"),
+              correlation_id=os.environ.get("GITHUB_RUN_ID", os.environ["GITHUB_SHA"]),
+              status="success",
+              artifact_uri=os.environ.get("GITHUB_SERVER_URL", "https://github.com") + "/" + os.environ["GITHUB_REPOSITORY"] + "/actions/runs/" + os.environ.get("GITHUB_RUN_ID", "0"),
+          )
+          result = publish_event(event)
+          print({"status_code": result["status_code"], "integration": event.integration_name, "environment": event.environment})
+          PY
