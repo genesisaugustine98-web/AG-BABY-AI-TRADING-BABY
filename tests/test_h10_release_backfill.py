@@ -1,11 +1,20 @@
 from datetime import date
 
-from scripts.backfill_h10_release_pages import parse_release, release_at
+from scripts.backfill_h10_release_pages import declared_release_date, parse_release, release_at
 
 
 def test_release_at_handles_dst_correctly() -> None:
     assert release_at(date(2021, 1, 4)).hour == 21
     assert release_at(date(2021, 7, 12)).hour == 20
+
+
+def test_declared_release_date_is_read_from_page():
+    html = '<div>Release Date: May 26, 2020</div>'
+    assert declared_release_date(html) == date(2020, 5, 26)
+
+
+def test_declared_release_date_rejects_missing_header():
+    assert declared_release_date("<html></html>") is None
 
 
 def test_parse_release_maps_dates_and_three_target_currencies() -> None:
