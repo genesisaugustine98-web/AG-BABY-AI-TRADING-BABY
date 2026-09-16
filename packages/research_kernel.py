@@ -53,7 +53,7 @@ def validate_observation(o: Observation) -> QualityResult:
 
 
 def point_in_time(observations: Iterable[Observation], decision_time_ms: int) -> list[Observation]:
-    """Return only observations known to be usable at the decision timestamp."""
+    """Return observations usable at decision_time in chronological order."""
     if decision_time_ms < 0:
         raise ValueError("decision_time_ms must be non-negative")
     selected = [o for o in observations if o.usable_at_ms <= decision_time_ms]
@@ -85,11 +85,11 @@ def cost_aware_replay(
     commission_fraction: Decimal,
     delay_bars: int = 0,
 ) -> ReplayResult:
-    """Replay a simple signal with explicit execution costs.
+    """Replay a position signal with explicit execution costs and delay.
 
-    Signals are executed at the next available bar after ``delay_bars``.
-    Costs are charged on changes in absolute position, so entering, flipping,
-    and exiting all incur realistic turnover costs instead of free fills.
+    The position is marked to market between bars. Any residual position is
+    explicitly flattened at the end of the sample so terminal exposure is not
+    treated as free and turnover is fully accounted for.
     """
     if delay_bars < 0:
         raise ValueError("delay_bars must be non-negative")
@@ -102,6 +102,7 @@ def cost_aware_replay(
             raise ValueError(f"{name} must be non-negative")
     if not bars:
         return ReplayResult(D0, D0, D0, D0, 0, 0)
+
     for i in range(1, len(bars)):
         if bars[i].timestamp_ms <= bars[i - 1].timestamp_ms:
             raise ValueError("bars must have strictly increasing timestamps")
@@ -111,31 +112,34 @@ def cost_aware_replay(
             raise ValueError("signal must be -1, 0 or 1")
     if bars[0].mid <= 0:
         raise ValueError("mid must be positive")
+    if bars[0].signal not in (-1, 0, 1):
+        raise ValueError("signal must be -1, 0 or 1")
 
     position = 0
     gross = D0
     total_cost = D0
     turnover = D0
     trades = 0
-    start = bars[0].mid
-    prev_mid = start
+    prev_mid = bars[0].mid
+    execution_cost = spread_fraction / Decimal("2") + slippage_fraction + commission_fraction
 
     for i in range(1, len(bars)):
         desired_index = i - 1 - delay_bars
         desired = position if desired_index < 0 else bars[desired_index].signal
         if desired != position:
             change = Decimal(abs(desired - position))
-            # Spread is modeled as half-spread per side; slippage and commission
-            # are charged on traded notional. This is deliberately conservative.
-            round_trip_cost = spread_fraction / Decimal("2") + slippage_fraction + commission_fraction
-            total_cost += change * round_trip_cost
+            total_cost += change * execution_cost
             turnover += change
             trades += 1
             position = desired
 
-        period_return = (bars[i].mid / prev_mid) - Decimal("1")
-        gross += Decimal(position) * period_return
+        gross += Decimal(position) * ((bars[i].mid / prev_mid) - Decimal("1"))
         prev_mid = bars[i].mid
 
-    net = gross - total_cost
-    return ReplayResult(net, gross, total_cost, turnover, trades, len(bars))
+    if position != 0:
+        change = Decimal(abs(position))
+        total_cost += change * execution_cost
+        turnover += change
+        trades += 1
+
+    return ReplayResult(gross - total_cost, gross, total_cost, turnover, trades, len(bars))
