@@ -22,7 +22,7 @@ CHECKS = {
     "colab": ["COLAB_ENABLED"],
     "aws": ["AWS_ROLE_ARN"],
     "vercel": ["VERCEL_TOKEN", "VERCEL_PROJECT_ID"],
-    "supabase": ["SUPABASE_URL", "SUPABASE_ANON_KEY"],
+    "supabase": ["SUPABASE_URL"],
     "render": ["RENDER_API_KEY", "RENDER_SERVICE_ID"],
     "digitalocean": ["DIGITALOCEAN_TOKEN"],
     "mt5_demo": ["MT5_LOGIN", "MT5_PASSWORD", "MT5_SERVER"],
