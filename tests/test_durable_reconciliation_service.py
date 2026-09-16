@@ -120,4 +120,4 @@ def test_duplicate_broker_order_identity_cannot_open_execution():
     assert result.status == "FREEZE"
     assert service.trading_permitted is False
     assert store.frozen is True
-    assert "duplicate_broker_client_order_id:AG-1" in store.frozen_reasons[-1]
+    assert "duplicate_broker_client_order_id:AG-1" in store.outcomes[-1].position_drift
