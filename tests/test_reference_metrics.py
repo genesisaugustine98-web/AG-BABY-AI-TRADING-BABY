@@ -20,7 +20,7 @@ def obs(day: int, value: str) -> H10Observation:
 
 
 def test_metrics_capture_drawdown_and_profit_factor():
-    bars = [obs(1, "1.0000"), obs(2, "1.0100"), obs(3, "1.0000"), obs(4, "1.0100")]
+    bars = [obs(1, "1.0000"), obs(2, "1.0100"), obs(3, "1.0200"), obs(4, "1.0100")]
     trades = run_reference_backtest(bars, instrument="EURUSD_REFERENCE", rule="momentum")
     metrics = summarize_detailed(trades)
     assert metrics["n"] == 2
