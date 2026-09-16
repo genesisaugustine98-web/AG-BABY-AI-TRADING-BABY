@@ -1,0 +1,35 @@
+name: integration-dispatch
+
+on:
+  repository_dispatch:
+    types: [integration-status]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate event envelope
+        env:
+          EVENT_JSON: ${{ toJson(github.event.client_payload) }}
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          p = json.loads(os.environ.get('EVENT_JSON', '{}'))
+          required = ['schema_version','integration_name','run_id','correlation_id','environment','status']
+          missing = [k for k in required if not p.get(k)]
+          if missing:
+              print('Missing required event fields:', ', '.join(missing))
+              sys.exit(1)
+          if p['environment'] == 'live':
+              print('LIVE integration events are not accepted by this workflow.')
+              sys.exit(1)
+          if p['status'] not in {'queued','running','success','failed','blocked'}:
+              print('Invalid status:', p['status'])
+              sys.exit(1)
+          print('Accepted integration event:', json.dumps({k:p.get(k) for k in required}, sort_keys=True))
+          PY
