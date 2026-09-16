@@ -11,5 +11,5 @@ def test_labor_day_week_shifts_to_tuesday():
     assert h10_release_date_for_observation(date(2026, 9, 4)) == date(2026, 9, 8)
 
 
-def test_juneteenth_shift_when_monday_observed():
+def test_regular_week_after_juneteenth_is_not_shifted():
     assert h10_release_date_for_observation(date(2021, 6, 18)) == date(2021, 6, 21)
