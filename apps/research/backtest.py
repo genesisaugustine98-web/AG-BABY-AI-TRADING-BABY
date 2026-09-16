@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Callable, Iterable
 
@@ -28,7 +27,7 @@ class BacktestConfig:
 class BacktestTrade:
     observation_id: str
     instrument: str
-    decision_time: datetime
+    decision_time: object
     entry_close: Decimal
     exit_close: Decimal
     gross_return: Decimal
@@ -40,11 +39,11 @@ def run_replay(
     signal: Callable[[MarketObservation], int],
     config: BacktestConfig,
 ) -> list[BacktestTrade]:
-    """Replay chronologically. Signal sees only the current observation.
+    """Replay chronologically with an explicit availability boundary.
 
-    `signal` returns -1, 0 or +1. Entry is delayed by delay_bars; the exit
-    horizon starts from that delayed entry. No future observation is exposed
-    to signal generation.
+    The signal is evaluated only on observations available at their decision
+    timestamp. An input whose usable_at is later than event_time is therefore
+    skipped rather than treated as instantaneous information.
     """
     config.validate()
     bars = sorted(observations, key=lambda item: item.event_time)
@@ -52,7 +51,7 @@ def run_replay(
 
     for i, obs in enumerate(bars):
         if not obs.usable_for(obs.event_time):
-            raise ValueError("observation usable_at cannot be after its event_time in this replay")
+            continue
         direction = signal(obs)
         if direction not in (-1, 0, 1):
             raise ValueError("signal must be -1, 0 or +1")
@@ -63,10 +62,8 @@ def run_replay(
         entry = bars[entry_idx]
         exit_bar = bars[exit_idx]
         if not obs.usable_for(entry.event_time):
-            # Decision information not available by the actual entry time is invalid.
             continue
         gross = direction * ((exit_bar.close / entry.close) - Decimal("1"))
-        net = net_return(gross, config.costs)
         trades.append(
             BacktestTrade(
                 observation_id=obs.observation_id,
@@ -75,7 +72,7 @@ def run_replay(
                 entry_close=entry.close,
                 exit_close=exit_bar.close,
                 gross_return=gross,
-                net_return=net,
+                net_return=net_return(gross, config.costs),
             )
         )
     return trades
