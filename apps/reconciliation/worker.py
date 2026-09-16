@@ -50,9 +50,8 @@ class ReconciliationWorker:
         )
         outcome = guarded_outcome(snapshot, outcome)
         self.store.record_outcome(outcome)
-        # Only a clean and structurally unambiguous reconciliation can unfreeze.
-        # Exceptions before this point leave the persisted state untouched; the durable
-        # service freezes on error rather than assuming the broker state is safe.
-        reason = ";".join(outcome.position_drift) if outcome.freeze_required else None
-        self.store.set_frozen(outcome.freeze_required, reason)
+        # A clean and structurally unambiguous reconciliation is the only path that
+        # clears the persisted freeze. Detailed drift reasons remain in the durable
+        # reconciliation outcome rather than coupling the store API to a reason string.
+        self.store.set_frozen(outcome.freeze_required)
         return WorkerResult(snapshot.captured_at, outcome.status, outcome.freeze_required)
