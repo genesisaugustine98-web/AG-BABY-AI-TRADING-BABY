@@ -1,10 +1,11 @@
+from datetime import date
+
 from scripts.backfill_h10_release_pages import parse_release, release_at
-from datetime import date, timezone
 
 
 def test_release_at_handles_dst_correctly() -> None:
-    assert release_at(date(2021, 1, 4)).utcoffset().total_seconds() == -5 * 3600
-    assert release_at(date(2021, 7, 12)).utcoffset().total_seconds() == -4 * 3600
+    assert release_at(date(2021, 1, 4)).hour == 21
+    assert release_at(date(2021, 7, 12)).hour == 20
 
 
 def test_parse_release_maps_dates_and_three_target_currencies() -> None:
