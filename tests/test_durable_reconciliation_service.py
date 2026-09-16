@@ -5,7 +5,7 @@ import pytest
 from apps.reconciliation.service import DurableReconciliationService
 from apps.reconciliation.worker import ReconciliationWorker
 from packages.broker_truth import BrokerPositionTruth, BrokerSnapshot
-from packages.execution_ledger import InternalOrderTruth
+from packages.execution_ledger import BrokerOrderTruth, InternalOrderTruth
 from packages.recovery import RecoveryState
 
 
@@ -49,7 +49,7 @@ class Store:
 
 def clean_snapshot():
     return BrokerSnapshot(
-        orders=(),
+        orders=(BrokerOrderTruth("broker-1", "AG-1", "USDJPY", "ACCEPTED", Decimal("1")),),
         positions=(BrokerPositionTruth("USDJPY", Decimal("1")),),
         captured_at="2026-09-16T19:00:00+00:00",
     )
@@ -90,7 +90,7 @@ def test_reconciliation_error_persists_freeze_and_stays_closed():
 def test_drift_cannot_reopen_execution():
     store = Store(frozen=True)
     drifted = BrokerSnapshot(
-        orders=(),
+        orders=(BrokerOrderTruth("broker-1", "AG-1", "USDJPY", "ACCEPTED", Decimal("1")),),
         positions=(BrokerPositionTruth("USDJPY", Decimal("2")),),
         captured_at="2026-09-16T19:01:00+00:00",
     )
