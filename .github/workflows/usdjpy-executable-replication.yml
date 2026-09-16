@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/usdjpy-executable-replication.yml"
       - "scripts/replicate_usdjpy_on_dukascopy.py"
+      - "scripts/replicate_usdjpy_on_dukascopy_fast.py"
       - "scripts/backfill_h10_release_pages.py"
   workflow_dispatch:
 
@@ -42,7 +43,7 @@ jobs:
 
       - name: Replicate against executable bid/ask ticks
         run: |
-          python scripts/replicate_usdjpy_on_dukascopy.py \
+          python scripts/replicate_usdjpy_on_dukascopy_fast.py \
             --h10-dir artifacts/h10/vintages \
             --from-date 2011-01-01 \
             --to-date 2026-09-30 \
@@ -62,8 +63,10 @@ jobs:
           assert len(d["results"]) == 16
           completed = [r for r in d["results"] if r["summary"]["n"] > 0]
           assert completed, "No executable observations were recovered"
+          assert len(d["market_data_errors"]) == 0, d["market_data_errors"]
           print({
               "signal_count": d["high_regime_signal_count"],
+              "unique_market_days": d["unique_market_days_requested"],
               "configs": len(d["results"]),
               "configs_with_trades": len(completed),
           })
