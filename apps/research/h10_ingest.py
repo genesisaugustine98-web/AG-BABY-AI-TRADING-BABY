@@ -9,14 +9,17 @@ import csv
 import io
 import urllib.request
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 
 H10_DAILY_CSV_URL = (
     "https://www.federalreserve.gov/datadownload/DownloadTable.aspx?"
     "filetype=csv&label=include&lastobs=10&layout=seriescolumn&rel=H10&"
     "series=60f32914ab61dfab590e0e470153e3ae&type=package"
 )
+H10_RELEASE_TIME_ET = time(16, 15)
+H10_NEW_YORK = ZoneInfo("America/New_York")
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,16 @@ class H10Observation:
     execution_grade: bool = False
 
 
+def h10_release_timestamp(release_date: date) -> datetime:
+    """Return the published H.10 release timestamp in UTC for a known release date.
+
+    The caller supplies the actual release date, including holiday-shifted releases.
+    America/New_York handles EST/EDT transitions without hard-coded offsets.
+    """
+    local = datetime.combine(release_date, H10_RELEASE_TIME_ET, tzinfo=H10_NEW_YORK)
+    return local.astimezone(timezone.utc)
+
+
 def _parse_decimal(value: str) -> Decimal | None:
     value = value.strip()
     if value in {"", "ND", "N/A", "NA"}:
@@ -41,8 +54,18 @@ def _parse_decimal(value: str) -> Decimal | None:
         raise ValueError(f"invalid H10 numeric value: {value!r}") from exc
 
 
-def parse_h10_daily_csv(payload: str, *, usable_at: datetime | None = None) -> list[H10Observation]:
-    """Parse an H.10 daily CSV export into deterministic reference observations."""
+def parse_h10_daily_csv(
+    payload: str,
+    *,
+    usable_at: datetime | None = None,
+    source_version: str = "H10-daily-csv",
+) -> list[H10Observation]:
+    """Parse an H.10 daily CSV export into deterministic reference observations.
+
+    For historical replay, pass the actual H.10 release timestamp as ``usable_at``.
+    Leaving it unset is appropriate only for live ingestion and stamps the batch with
+    current UTC time, never an inferred historical publication time.
+    """
     if usable_at is None:
         usable_at = datetime.now(timezone.utc)
     elif usable_at.tzinfo is None or usable_at.utcoffset() is None:
@@ -72,16 +95,19 @@ def parse_h10_daily_csv(payload: str, *, usable_at: datetime | None = None) -> l
             value = _parse_decimal(row[idx])
             if value is None:
                 continue
-            day = date.fromisoformat(date_text)
+            try:
+                day = date.fromisoformat(date_text)
+            except ValueError as exc:
+                raise ValueError(f"invalid H10 date column: {date_text!r}") from exc
             event_time = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
             observations.append(
                 H10Observation(
                     instrument=instrument,
                     event_time=event_time,
-                    usable_at=max(usable_at, event_time),
+                    usable_at=usable_at,
                     value=value,
                     source="Federal Reserve Board H.10",
-                    source_version=date_text,
+                    source_version=source_version,
                     observation_id=f"H10:{series}:{date_text}",
                 )
             )
