@@ -1,6 +1,11 @@
 name: H10 PIT backfill
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/h10-pit-backfill.yml"
+      - "scripts/backfill_h10_release_pages.py"
   workflow_dispatch:
     inputs:
       from_year:
