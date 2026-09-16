@@ -11,6 +11,7 @@ from typing import Protocol
 
 from packages.broker_truth import BrokerPositionTruth, BrokerSnapshot, BrokerTruthAdapter, ReconciliationOutcome, Reconciler
 from packages.execution_ledger import InternalOrderTruth
+from packages.reconciliation_guard import guarded_outcome
 
 
 class InternalTruthStore(Protocol):
@@ -47,8 +48,11 @@ class ReconciliationWorker:
             self.truth_store.positions(),
             snapshot,
         )
+        outcome = guarded_outcome(snapshot, outcome)
         self.store.record_outcome(outcome)
-        # Only a clean reconciliation can unfreeze. Exceptions before this point leave
-        # the persisted state untouched; the durable service freezes on error.
-        self.store.set_frozen(outcome.freeze_required)
+        # Only a clean and structurally unambiguous reconciliation can unfreeze.
+        # Exceptions before this point leave the persisted state untouched; the durable
+        # service freezes on error rather than assuming the broker state is safe.
+        reason = ";".join(outcome.position_drift) if outcome.freeze_required else None
+        self.store.set_frozen(outcome.freeze_required, reason=reason)
         return WorkerResult(snapshot.captured_at, outcome.status, outcome.freeze_required)
