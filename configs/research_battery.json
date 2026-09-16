@@ -1,0 +1,50 @@
+{
+  "schema_version": "1",
+  "dataset_revision_status": "revised_history",
+  "hypotheses": [
+    {
+      "hypothesis_id": "H1_MOMENTUM_1D",
+      "statement": "The sign of the immediately preceding daily reference-rate return predicts the sign of the next daily return.",
+      "rule": "momentum",
+      "instruments": ["EURUSD_REFERENCE", "GBPUSD_REFERENCE", "USDJPY_REFERENCE"],
+      "horizons": [1],
+      "development_fraction": "0.60",
+      "validation_fraction": "0.20",
+      "holdout_fraction": "0.20"
+    },
+    {
+      "hypothesis_id": "H2_REVERSAL_1D",
+      "statement": "The sign of the immediately preceding daily reference-rate return reverses on the next daily observation.",
+      "rule": "reversal",
+      "instruments": ["EURUSD_REFERENCE", "GBPUSD_REFERENCE", "USDJPY_REFERENCE"],
+      "horizons": [1],
+      "development_fraction": "0.60",
+      "validation_fraction": "0.20",
+      "holdout_fraction": "0.20"
+    },
+    {
+      "hypothesis_id": "H3_MOMENTUM_5D",
+      "statement": "The sign of the immediately preceding daily reference-rate return predicts direction over the next five observations.",
+      "rule": "momentum",
+      "instruments": ["EURUSD_REFERENCE", "GBPUSD_REFERENCE", "USDJPY_REFERENCE"],
+      "horizons": [5],
+      "development_fraction": "0.60",
+      "validation_fraction": "0.20",
+      "holdout_fraction": "0.20"
+    },
+    {
+      "hypothesis_id": "H4_REVERSAL_5D",
+      "statement": "The sign of the immediately preceding daily reference-rate return reverses over the next five observations.",
+      "rule": "reversal",
+      "instruments": ["EURUSD_REFERENCE", "GBPUSD_REFERENCE", "USDJPY_REFERENCE"],
+      "horizons": [5],
+      "development_fraction": "0.60",
+      "validation_fraction": "0.20",
+      "holdout_fraction": "0.20"
+    }
+  ],
+  "one_way_cost_bps_grid": [0, 2, 5, 10],
+  "required_splits": ["development", "validation", "holdout"],
+  "selection_rule": "No tuning on holdout. Any promoted configuration must be pre-declared before holdout inspection.",
+  "execution_grade": false
+}
