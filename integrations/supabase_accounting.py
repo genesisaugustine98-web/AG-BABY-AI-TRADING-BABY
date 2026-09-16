@@ -1,8 +1,9 @@
 """Trusted-server bridge from broker-confirmed fills to atomic Supabase accounting.
 
 The database function owns the transaction: insert the immutable fill, reduce the
-position, and append the broker-confirmed event together. This module never accepts
-submission acknowledgements or unresolved order states as fills.
+position, update durable order fill state, and append the broker-confirmed event
+together. This module never accepts submission acknowledgements or unresolved
+UNKNOWN outcomes as fills.
 """
 from __future__ import annotations
 
@@ -11,7 +12,6 @@ import os
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -28,9 +28,6 @@ class DurablePositionResult:
     realized_pnl: Decimal
     financing_pnl: Decimal
     state: str
-
-
-authoritative_fill_rpc = "apply_broker_confirmed_fill"
 
 
 class SupabaseAccountingBridge:
@@ -73,14 +70,16 @@ class SupabaseAccountingBridge:
             return [decoded]
         raise RuntimeError("Supabase accounting RPC returned an invalid response")
 
-    def apply(self, *, environment: str, fill: BrokerConfirmedFill) -> DurablePositionResult:
+    def apply(self, *, environment: str, order_id: str, fill: BrokerConfirmedFill) -> DurablePositionResult:
         fill.validate()
+        if not order_id:
+            raise ValueError("internal order_id is required")
         result = self._rpc(
-            authoritative_fill_rpc,
+            "apply_broker_confirmed_fill",
             {
                 "p_environment": environment,
                 "p_fill_id": fill.fill_id,
-                "p_order_id": fill.broker_order_id if not fill.client_order_id else fill.client_order_id,
+                "p_order_id": order_id,
                 "p_broker_fill_id": fill.fill_id,
                 "p_broker_order_id": fill.broker_order_id,
                 "p_client_order_id": fill.client_order_id,
