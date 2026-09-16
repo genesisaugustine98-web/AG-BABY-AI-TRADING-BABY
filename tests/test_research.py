@@ -25,11 +25,24 @@ def bar(i: int, close: str, *, usable_lag_seconds: int = 0) -> MarketObservation
 
 
 def test_future_information_is_not_tradable():
-    bars = [bar(0, "1.1000", usable_lag_seconds=5), bar(1, "1.1010"), bar(2, "1.1020")]
+    bars = [
+        bar(0, "1.1000", usable_lag_seconds=5),
+        bar(1, "1.1010", usable_lag_seconds=5),
+        bar(2, "1.1020", usable_lag_seconds=5),
+    ]
     trades = run_replay(bars, lambda _: 1, BacktestConfig(horizon_bars=1))
-    # bar-0 is not usable at its event time, so it cannot create the first trade.
-    # bar-1 is already usable by bar-1 time and may legitimately create a later trade.
-    assert [trade.observation_id for trade in trades] == ["bar-1"]
+    assert trades == []
+
+
+def test_later_available_information_can_be_used():
+    bars = [
+        bar(0, "1.1000", usable_lag_seconds=5),
+        bar(1, "1.1010"),
+        bar(2, "1.1020"),
+    ]
+    trades = run_replay(bars, lambda _: 1, BacktestConfig(horizon_bars=1))
+    assert len(trades) == 1
+    assert trades[0].observation_id == "bar-1"
 
 
 def test_delayed_entry_is_explicit():
