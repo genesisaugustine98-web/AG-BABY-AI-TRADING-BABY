@@ -66,13 +66,7 @@ def release_at(release_date: date) -> datetime:
 
 
 def candidate_release_dates(start_year: int, end_year: int) -> list[date]:
-    """Enumerate Mondays plus Tuesdays for Monday-holiday release shifts.
-
-    H.10 is normally released Monday at 4:15 p.m. Eastern Time; when a Monday
-    is a federal holiday, the weekly statistical release moves to Tuesday.
-    Fetching both weekdays is simpler and safer than assuming an index page
-    enumerates every historical dated release URL.
-    """
+    """Enumerate Mondays plus Tuesdays for Monday-holiday release shifts."""
     start = date(start_year, 1, 1)
     end = date(end_year, 12, 31)
     cursor = start
@@ -82,6 +76,21 @@ def candidate_release_dates(start_year: int, end_year: int) -> list[date]:
             dates.append(cursor)
         cursor += timedelta(days=1)
     return dates
+
+
+def declared_release_date(html: str) -> date | None:
+    """Read the release date declared by the Federal Reserve page itself."""
+    match = re.search(
+        r"Release Date:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})",
+        html,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%B %d, %Y").date()
+    except ValueError:
+        return None
 
 
 def _date_header(value: str) -> tuple[int, int] | None:
@@ -160,7 +169,11 @@ def _acquire_release(release_date: date) -> tuple[date, bytes, list[dict[str, ob
         raw = fetch(url)
     except Exception:
         return None
-    parsed = parse_release(raw.decode("utf-8", errors="replace"), release_date)
+    text = raw.decode("utf-8", errors="replace")
+    declared = declared_release_date(text)
+    if declared != release_date:
+        return None
+    parsed = parse_release(text, release_date)
     if not parsed:
         return None
     return release_date, raw, parsed
@@ -202,7 +215,7 @@ def main() -> int:
         })
 
     (out / "archive_manifest.json").write_text(json.dumps({
-        "schema_version": "2",
+        "schema_version": "3",
         "source": "Federal Reserve Board H.10",
         "from_year": args.from_year,
         "to_year": args.to_year,
