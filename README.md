@@ -2,7 +2,7 @@
 
 **Author: Genesis Koodanga Augustine - September 2026**
 
-This repository is an engineering scaffold for an evidence-first FX research, decision, risk and **demo-only** execution system.
+This repository is the canonical engineering control plane for an evidence-first FX research, decision, risk and **demo-only** execution system.
 
 ## Important status
 
@@ -11,10 +11,17 @@ This repository is an engineering scaffold for an evidence-first FX research, de
 - The LLM has no execution credentials and no direct broker authority.
 - Unknown broker results cannot transition directly to retry.
 - Risk, admission and execution are separate interfaces.
+- External platforms must consume versioned repository artifacts and must not become a second source of truth.
 
 ## Core flow
 
 `data -> quality -> provenance -> state -> forecast -> executable value -> risk -> admission -> order state machine -> broker -> reconciliation -> TCA -> monitoring`
+
+## Platform control plane
+
+The integration layer defines one communication contract for GitHub, Hugging Face, Kaggle, Colab, AWS, Vercel, Supabase, Render, DigitalOcean, research libraries, and the MT5 demo gateway. See `integrations/PLATFORM_MATRIX.md` and `schemas/integration_event.schema.json`.
+
+CI runs deterministic tests plus a secret-safe integration presence check. Credentials are never printed or committed.
 
 ## Repository structure
 
@@ -22,11 +29,13 @@ This repository is an engineering scaffold for an evidence-first FX research, de
 - `apps/execution_gateway/` - MT5 adapter + deterministic broker test double
 - `tests/` - safety and state tests
 - `configs/` - demo-only environment template
+- `integrations/` - platform matrix, environment template, and health checker
+- `schemas/` - versioned interoperability contracts
 - `docs/` - engineering specifications and the master cookbook
 
 ## Credential rule
 
-Never commit broker passwords/API keys. Use an OS secret store, cloud secret manager, or a protected local environment file. The LLM must never receive broker credentials.
+Never commit broker passwords/API keys. Use an OS secret store, cloud secret manager, or protected platform secret store. Prefer GitHub OIDC for cloud deployments where supported. The LLM must never receive broker credentials.
 
 ## MT5 demo path
 
