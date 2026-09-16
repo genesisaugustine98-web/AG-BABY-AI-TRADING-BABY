@@ -1,10 +1,4 @@
-"""Reconstruct a point-in-time H.10 archive from dated Federal Reserve release pages.
-
-The current DDP history is revised history. This script instead discovers dated H.10
-release pages and preserves each publication timestamp as the information-availability
-clock. It intentionally extracts only the EUR, GBP, and JPY rows used by the fixed
-research battery.
-"""
+"""Reconstruct a point-in-time H.10 archive from dated Federal Reserve release pages."""
 from __future__ import annotations
 
 import argparse
@@ -23,37 +17,39 @@ RELEASE_TIME = time(16, 15)
 
 
 class H10Parser(HTMLParser):
+    """Collect HTML tables as normalized rows."""
+
     def __init__(self) -> None:
         super().__init__()
-        self.in_table = False
-        self.rows: list[list[str]] = []
+        self.tables: list[list[list[str]]] = []
+        self._table: list[list[str]] | None = None
         self._row: list[str] | None = None
         self._cell: list[str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "table":
-            self.in_table = True
-        elif self.in_table and tag in {"tr"}:
+            self._table = []
+        elif self._table is not None and tag == "tr":
             self._row = []
-        elif self.in_table and tag in {"td", "th"}:
+        elif self._row is not None and tag in {"td", "th"}:
             self._cell = []
 
     def handle_data(self, data: str) -> None:
-        if self.in_table and self._cell is not None:
+        if self._cell is not None:
             self._cell.append(data)
 
     def handle_endtag(self, tag: str) -> None:
-        if self.in_table and tag in {"td", "th"} and self._cell is not None:
-            text = re.sub(r"\s+", " ", "".join(self._cell)).strip()
-            if self._row is not None:
-                self._row.append(text)
+        if tag in {"td", "th"} and self._row is not None and self._cell is not None:
+            self._row.append(re.sub(r"\s+", " ", "".join(self._cell)).strip())
             self._cell = None
-        elif self.in_table and tag == "tr" and self._row is not None:
+        elif tag == "tr" and self._table is not None and self._row is not None:
             if self._row:
-                self.rows.append(self._row)
+                self._table.append(self._row)
             self._row = None
-        elif tag == "table":
-            self.in_table = False
+        elif tag == "table" and self._table is not None:
+            if self._table:
+                self.tables.append(self._table)
+            self._table = None
 
 
 def fetch(url: str) -> bytes:
@@ -74,42 +70,82 @@ def discover_release_dates(start_year: int, end_year: int) -> list[date]:
             html = fetch(url).decode("utf-8", errors="replace")
         except Exception:
             continue
-        # Dated release links such as /releases/h10/20211227/
         for match in re.finditer(r"/releases/h10/(\d{8})/", html, flags=re.I):
-            text = match.group(1)
             try:
-                dates.append(datetime.strptime(text, "%Y%m%d").date())
+                dates.append(datetime.strptime(match.group(1), "%Y%m%d").date())
             except ValueError:
-                pass
+                continue
     return sorted(set(dates))
+
+
+def _date_header(value: str) -> tuple[int, int] | None:
+    value = value.strip().replace(".", "")
+    for fmt in ("%b %d", "%B %d"):
+        try:
+            parsed = datetime.strptime(value, fmt)
+            return parsed.month, parsed.day
+        except ValueError:
+            continue
+    return None
 
 
 def parse_release(html: str, release_date: date) -> list[dict[str, object]]:
     parser = H10Parser()
     parser.feed(html)
-    rows = parser.rows
-    target_rows: dict[str, list[str]] = {}
-    for row in rows:
-        joined = " ".join(row).upper()
-        if "EMU MEMBERS" in joined and "EURO" in joined:
-            target_rows["EURUSD_REFERENCE"] = row
-        elif "UNITED KINGDOM" in joined and "POUND" in joined:
-            target_rows["GBPUSD_REFERENCE"] = row
-        elif "JAPAN" in joined and "YEN" in joined:
-            target_rows["USDJPY_REFERENCE"] = row
-
-    out: list[dict[str, object]] = []
+    targets = {
+        "EMU MEMBERS": "EURUSD_REFERENCE",
+        "UNITED KINGDOM": "GBPUSD_REFERENCE",
+        "JAPAN": "USDJPY_REFERENCE",
+    }
     usable = release_at(release_date)
-    for instrument, row in sorted(target_rows.items()):
-        # Country, currency, then daily values. Date headers are extracted from the
-        # same release page separately, so row-position parsing is deterministic.
-        out.append({
-            "instrument": instrument,
-            "release_date": release_date.isoformat(),
-            "usable_at": usable.isoformat(),
-            "raw_row": row,
-        })
-    return out
+    observations: list[dict[str, object]] = []
+
+    for table in parser.tables:
+        header_idx = next(
+            (i for i, row in enumerate(table) if sum(_date_header(cell) is not None for cell in row) >= 2),
+            None,
+        )
+        if header_idx is None:
+            continue
+        positions: list[tuple[int, date]] = []
+        for idx, cell in enumerate(table[header_idx]):
+            parsed = _date_header(cell)
+            if parsed is None:
+                continue
+            year = release_date.year
+            if release_date.month == 1 and parsed[0] == 12:
+                year -= 1
+            positions.append((idx, date(year, parsed[0], parsed[1])))
+
+        for row in table[header_idx + 1 :]:
+            if len(row) < 3:
+                continue
+            country = row[0].upper()
+            instrument = next((value for key, value in targets.items() if key in country), None)
+            if instrument is None:
+                continue
+            for idx, event_day in positions:
+                if idx >= len(row):
+                    continue
+                raw_value = row[idx].strip()
+                if raw_value in {"", "ND", "N/A", "NA"}:
+                    continue
+                try:
+                    value = raw_value.replace(",", "")
+                    float(value)
+                except ValueError:
+                    continue
+                observations.append({
+                    "instrument": instrument,
+                    "event_time": datetime(event_day.year, event_day.month, event_day.day, tzinfo=timezone.utc).isoformat(),
+                    "usable_at": usable.isoformat(),
+                    "value": value,
+                    "source": "Federal Reserve Board H.10 dated release page",
+                    "source_version": f"H10-release-{release_date.isoformat()}",
+                    "observation_id": f"H10:{instrument}:{event_day.isoformat()}:{release_date.isoformat()}",
+                    "execution_grade": False,
+                })
+    return observations
 
 
 def main() -> int:
@@ -129,33 +165,25 @@ def main() -> int:
         except Exception:
             continue
         raw_sha = hashlib.sha256(raw).hexdigest()
-        parsed = parse_release(raw.decode("utf-8", errors="replace"), release_date)
-        if not parsed:
+        observations = parse_release(raw.decode("utf-8", errors="replace"), release_date)
+        if not observations:
             continue
         stem = release_date.isoformat()
-        raw_path = out / f"h10_release_{stem}.html"
-        json_path = out / f"h10_release_{stem}.json"
-        raw_path.write_bytes(raw)
-        json_path.write_text(json.dumps({
-            "schema_version": "1",
-            "source": "Federal Reserve Board H.10 dated release page",
-            "release_date": stem,
-            "release_at_utc": release_at(release_date).isoformat(),
-            "source_url": url,
-            "raw_sha256": raw_sha,
-            "revision_status": "point_in_time_release_page",
-            "rows": parsed,
-        }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        (out / f"h10_release_{stem}.html").write_bytes(raw)
+        with (out / f"h10_release_{stem}.jsonl").open("w", encoding="utf-8") as handle:
+            for row in observations:
+                handle.write(json.dumps(row, sort_keys=True) + "\n")
         manifests.append({
             "release_date": stem,
             "release_at_utc": release_at(release_date).isoformat(),
             "source_url": url,
             "raw_sha256": raw_sha,
-            "observation_row_count": len(parsed),
+            "observation_count": len(observations),
+            "revision_status": "point_in_time_release_page",
         })
 
     (out / "archive_manifest.json").write_text(json.dumps({
-        "schema_version": "1",
+        "schema_version": "2",
         "source": "Federal Reserve Board H.10",
         "from_year": args.from_year,
         "to_year": args.to_year,
