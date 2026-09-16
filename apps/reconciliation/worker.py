@@ -48,10 +48,7 @@ class ReconciliationWorker:
             snapshot,
         )
         self.store.record_outcome(outcome)
-        # Only a clean reconciliation can unfreeze. An exception before this point
-        # leaves the prior persisted state untouched; the durable service freezes on error.
-        self.store.set_frozen(
-            outcome.freeze_required,
-            reason="reconciliation_drift" if outcome.freeze_required else "reconciliation_matched",
-        )
+        # Only a clean reconciliation can unfreeze. Exceptions before this point leave
+        # the persisted state untouched; the durable service freezes on error.
+        self.store.set_frozen(outcome.freeze_required)
         return WorkerResult(snapshot.captured_at, outcome.status, outcome.freeze_required)
