@@ -20,7 +20,13 @@ jobs:
           python-version: "3.12"
       - name: Fetch and normalize current H.10 release
         run: python scripts/ingest_h10_current.py --output-dir artifacts/h10
-      - name: Upload H.10 snapshot
+      - name: Run descriptive baseline diagnostics
+        run: |
+          python scripts/analyze_h10_snapshot.py \
+            artifacts/h10/h10_*.jsonl \
+            --cost-bps 2 \
+            > artifacts/h10/baseline_diagnostics.json
+      - name: Upload H.10 snapshot and diagnostics
         uses: actions/upload-artifact@v4
         with:
           name: h10-current-snapshot
