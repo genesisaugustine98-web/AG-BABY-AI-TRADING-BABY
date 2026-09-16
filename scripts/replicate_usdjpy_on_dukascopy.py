@@ -47,6 +47,7 @@ class ReleaseRow:
     release_date: date
     release_at: datetime
     value: Decimal
+    source_event_date: date
     prior_value: Decimal | None
     prior_return: Decimal | None
     volatility: Decimal | None
@@ -60,15 +61,24 @@ def release_at(release_date: date) -> datetime:
     return local.astimezone(timezone.utc)
 
 
-def load_h10_rows(root: Path) -> dict[date, Decimal]:
+def load_h10_release_values(root: Path) -> dict[date, Decimal]:
+    """Build one causal H.10 state value per dated release: the latest observation on that page."""
     out: dict[date, Decimal] = {}
     for path in sorted(root.glob("h10_release_*.jsonl")):
+        match = path.stem.removeprefix("h10_release_")
+        release_day = date.fromisoformat(match)
+        candidates: list[tuple[date, Decimal]] = []
         for line in path.read_text(encoding="utf-8").splitlines():
             row = json.loads(line)
             if row.get("instrument") != "USDJPY_REFERENCE":
                 continue
-            day = date.fromisoformat(str(row["event_time"])[:10])
-            out[day] = Decimal(str(row["value"]))
+            event_day = date.fromisoformat(str(row["event_time"])[:10])
+            value = Decimal(str(row["value"]))
+            if event_day <= release_day:
+                candidates.append((event_day, value))
+        if candidates:
+            event_day, value = max(candidates, key=lambda x: x[0])
+            out[release_day] = value
     return out
 
 
@@ -92,28 +102,28 @@ def _median(values: list[Decimal]) -> Decimal | None:
 
 def build_candidate_rows(values: dict[date, Decimal], *, vol_window: int = 20, threshold_window: int = 104) -> list[ReleaseRow]:
     dates = sorted(values)
-    returns_by_date: dict[date, Decimal] = {}
+    returns_by_release: dict[date, Decimal] = {}
     for i in range(1, len(dates)):
         prev = values[dates[i - 1]]
         cur = values[dates[i]]
         if prev > 0 and cur > 0:
-            returns_by_date[dates[i]] = (cur / prev).ln()
+            returns_by_release[dates[i]] = (cur / prev).ln()
 
-    vols_by_date: dict[date, Decimal] = {}
+    vols_by_release: dict[date, Decimal] = {}
     for i, day in enumerate(dates):
-        prior_returns = [returns_by_date[d] for d in dates[max(0, i - vol_window + 1) : i + 1] if d in returns_by_date]
+        prior_returns = [returns_by_release[d] for d in dates[max(0, i - vol_window + 1) : i + 1] if d in returns_by_release]
         vol = _rolling_volatility(prior_returns, vol_window)
         if vol is not None:
-            vols_by_date[day] = vol
+            vols_by_release[day] = vol
 
     rows: list[ReleaseRow] = []
     for i, day in enumerate(dates):
         if i == 0:
             continue
         prev_day = dates[i - 1]
-        prior_return = returns_by_date.get(day)
-        vol = vols_by_date.get(day)
-        preceding_vols = [vols_by_date[d] for d in dates[:i] if d in vols_by_date]
+        prior_return = returns_by_release.get(day)
+        vol = vols_by_release.get(day)
+        preceding_vols = [vols_by_release[d] for d in dates[:i] if d in vols_by_release]
         threshold_values = preceding_vols[-threshold_window:]
         threshold = _median(threshold_values) if len(threshold_values) >= 52 else None
         high = vol is not None and threshold is not None and vol > threshold
@@ -123,6 +133,7 @@ def build_candidate_rows(values: dict[date, Decimal], *, vol_window: int = 20, t
                 release_date=day,
                 release_at=release_at(day),
                 value=values[day],
+                source_event_date=day,
                 prior_value=values[prev_day],
                 prior_return=prior_return,
                 volatility=vol,
@@ -193,7 +204,6 @@ def _split_dates(rows: list[ReleaseRow], start: date, end: date) -> list[Release
 
 
 def _quote_targets(rows: list[ReleaseRow], latency_seconds: int) -> list[tuple[date, datetime]]:
-    active = [r for r in rows if r.high_regime and r.signal != 0]
     tasks: dict[date, datetime] = {}
     for idx, row in enumerate(rows):
         if not (row.high_regime and row.signal != 0) or idx + 5 >= len(rows):
@@ -248,11 +258,12 @@ def execute_replication(
             {
                 "entry_date": row.release_date.isoformat(),
                 "target_date": target.release_date.isoformat(),
-                "entry_time_utc": entry.timestamp.isoformat(),
-                "exit_time_utc": exit_tick.timestamp.isoformat(),
                 "signal": row.signal,
+                "h10_prior_return": None if row.prior_return is None else str(row.prior_return),
                 "h10_volatility": None if row.volatility is None else str(row.volatility),
                 "h10_threshold": None if row.threshold is None else str(row.threshold),
+                "entry_time_utc": entry.timestamp.isoformat(),
+                "exit_time_utc": exit_tick.timestamp.isoformat(),
                 "entry_bid": str(entry.bid),
                 "entry_ask": str(entry.ask),
                 "exit_bid": str(exit_tick.bid),
@@ -294,7 +305,7 @@ def main() -> int:
     h10_dir = Path(args.h10_dir)
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    values = load_h10_rows(h10_dir)
+    values = load_h10_release_values(h10_dir)
     rows = _split_dates(build_candidate_rows(values), date.fromisoformat(args.from_date), date.fromisoformat(args.to_date))
 
     all_results: list[dict[str, object]] = []
@@ -320,7 +331,7 @@ def main() -> int:
             "instrument": "USDJPY",
             "state": "20-release realized-volatility high regime",
             "threshold": "median of preceding 104 release-state volatilities; minimum 52 states",
-            "signal": "5-release momentum",
+            "signal": "5-release momentum using consecutive H.10 release states",
         },
         "execution_model": {
             "long": "buy ask at entry, sell bid at exit",
