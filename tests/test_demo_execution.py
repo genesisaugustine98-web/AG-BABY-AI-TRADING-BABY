@@ -2,8 +2,14 @@ from decimal import Decimal
 
 import pytest
 
-from packages.demo_execution import DemoOrderLifecycle, SubmissionRequest, SubmissionResult, deterministic_client_order_id
-from packages.models import TradeIntent
+from packages.demo_execution import (
+    DemoOrderLifecycle,
+    SubmissionRequest,
+    SubmissionResult,
+    deterministic_client_order_id,
+    lifecycle_state,
+)
+from packages.models import OrderState, TradeIntent
 
 
 def intent(intent_id="intent-1"):
@@ -57,8 +63,9 @@ def test_unknown_is_not_retried_and_requires_truth():
     truth = Truth(None)
     lifecycle = DemoOrderLifecycle(submitter, truth)
 
-    client_id, result = lifecycle.submit_once(intent())
+    client_id, result, state = lifecycle.submit_once(intent())
     assert result.outcome == "UNKNOWN"
+    assert state is OrderState.UNKNOWN
     assert len(submitter.requests) == 1
     assert client_id == submitter.requests[0].client_order_id
     with pytest.raises(RuntimeError, match="remains unresolved"):
@@ -69,7 +76,7 @@ def test_unknown_resolves_from_broker_truth():
     submitter = Submitter(SubmissionResult("UNKNOWN"))
     truth = Truth(SubmissionResult("ACCEPTED", broker_order_id="broker-1"))
     lifecycle = DemoOrderLifecycle(submitter, truth)
-    client_id, _ = lifecycle.submit_once(intent())
+    client_id, _, _ = lifecycle.submit_once(intent())
 
     resolved = lifecycle.reconcile_unknown(client_id)
     assert resolved.outcome == "ACCEPTED"
@@ -82,6 +89,16 @@ def test_rejected_does_not_become_fill():
     truth = Truth(None)
     lifecycle = DemoOrderLifecycle(submitter, truth)
 
-    _, result = lifecycle.submit_once(intent())
+    _, result, state = lifecycle.submit_once(intent())
     assert result.outcome == "REJECTED"
+    assert state is OrderState.REJECTED
     assert truth.ids == []
+
+
+def test_partial_and_full_fill_states_are_explicit():
+    requested = Decimal("2")
+    assert lifecycle_state(SubmissionResult("ACCEPTED"), requested) is OrderState.ACCEPTED
+    assert lifecycle_state(SubmissionResult("ACCEPTED", filled_quantity=Decimal("1")), requested) is OrderState.PARTIAL
+    assert lifecycle_state(SubmissionResult("ACCEPTED", filled_quantity=Decimal("2")), requested) is OrderState.FILLED
+    with pytest.raises(ValueError, match="outside requested"):
+        lifecycle_state(SubmissionResult("ACCEPTED", filled_quantity=Decimal("3")), requested)
