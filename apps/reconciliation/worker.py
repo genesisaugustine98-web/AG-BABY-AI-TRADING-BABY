@@ -54,5 +54,5 @@ class ReconciliationWorker:
         # Exceptions before this point leave the persisted state untouched; the durable
         # service freezes on error rather than assuming the broker state is safe.
         reason = ";".join(outcome.position_drift) if outcome.freeze_required else None
-        self.store.set_frozen(outcome.freeze_required, reason=reason)
+        self.store.set_frozen(outcome.freeze_required, reason)
         return WorkerResult(snapshot.captured_at, outcome.status, outcome.freeze_required)
