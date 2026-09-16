@@ -12,7 +12,7 @@ on:
 jobs:
   replicate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,14 +61,25 @@ jobs:
           assert d["experiment"].startswith("usdjpy_h10_high_vol_5release_momentum_executable")
           assert d["high_regime_signal_count"] > 0
           assert len(d["results"]) == 16
-          completed = [r for r in d["results"] if r["summary"]["n"] > 0]
-          assert completed, "No executable observations were recovered"
           assert len(d["market_data_errors"]) == 0, d["market_data_errors"]
+          by_latency = {}
+          for r in d["results"]:
+              by_latency[r["latency_seconds"]] = r
+          assert len(by_latency) == 4
+          for latency, r in sorted(by_latency.items()):
+              assert r["coverage"]["eligible_signal_count"] == d["high_regime_signal_count"]
+              assert r["coverage"]["complete"], {
+                  "latency": latency,
+                  "coverage": r["coverage"],
+              }
+          completed = [r for r in d["results"] if r["summary"]["n"] == d["high_regime_signal_count"]]
+          assert len(completed) == 16, "Every configuration must contain the full candidate sample"
           print({
               "signal_count": d["high_regime_signal_count"],
               "unique_market_days": d["unique_market_days_requested"],
               "configs": len(d["results"]),
-              "configs_with_trades": len(completed),
+              "full_sample_configs": len(completed),
+              "missing_404_buckets": d["market_data_missing_404_count"],
           })
           PY
 
