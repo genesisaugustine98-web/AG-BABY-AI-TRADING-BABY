@@ -26,7 +26,7 @@ class DurableReconciliationService:
         self.recovery = RecoveryController()
 
     def startup(self) -> StartupResult:
-        persisted_frozen = self.worker.store.load_frozen()  # type: ignore[attr-defined]
+        persisted_frozen = self.worker.store.load_frozen()
         state = self.recovery.hydrate(persisted_frozen)
         return StartupResult(persisted_frozen, state)
 
@@ -35,7 +35,7 @@ class DurableReconciliationService:
         try:
             result = self.worker.run_once()
         except Exception as exc:
-            self.worker.store.set_frozen(True, reason=f"reconciliation_exception:{type(exc).__name__}")  # type: ignore[attr-defined]
+            self.worker.store.set_frozen(True, reason=f"reconciliation_exception:{type(exc).__name__}")
             self.recovery.hydrate(True)
             raise
         self.recovery.reconciliation_result(result.status == "MATCHED")
