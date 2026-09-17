@@ -25,11 +25,7 @@ async function supabaseGet(table: string, params: Record<string, string>) {
   if (!base || !key) return null;
   const query = new URLSearchParams(params);
   const response = await fetch(`${base}/rest/v1/${table}?${query.toString()}`, {
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      Accept: "application/json",
-    },
+    headers: { apikey: key, Authorization: `Bearer ${key}`, Accept: "application/json" },
     cache: "no-store",
   });
   if (!response.ok) throw new Error(`Supabase ${table} HTTP ${response.status}`);
@@ -64,7 +60,7 @@ export async function getDashboardSnapshot(): Promise<DashboardSnapshot> {
       supabaseGet("execution_positions", { environment: `eq.${environment}`, select: "*", order: "updated_at.desc", limit: "25" }),
       supabaseGet("execution_orders", { environment: `eq.${environment}`, state: "not.in.(FILLED,REJECTED,CANCELLED)", select: "*", order: "updated_at.desc", limit: "25" }),
       supabaseGet("execution_reconciliations", { environment: `eq.${environment}`, select: "*", order: "started_at.desc", limit: "10" }),
-      supabaseGet("risk_decisions", { environment: `eq.${environment}", select: "*", order: "created_at.desc", limit: "10" }),
+      supabaseGet("risk_decisions", { environment: `eq.${environment}`, select: "*", order: "created_at.desc", limit: "10" }),
       supabaseGet("opportunity_candidates", { environment: `eq.${environment}`, select: "*", order: "created_at.desc", limit: "10" }),
       supabaseGet("model_registry", { select: "*", order: "created_at.desc", limit: "10" }),
       supabaseGet("data_source_registry", { select: "*", order: "updated_at.desc", limit: "15" }),
