@@ -12,13 +12,13 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Mapping
 
 from packages.broker_truth import BrokerPositionTruth, BrokerSnapshot, ReconciliationOutcome
 from packages.execution_ledger import InternalOrderTruth
 
 
-_TERMINAL_ORDER_STATES = {"FILLED", "REJECTED", "CANCELED"}
+_TERMINAL_ORDER_STATES = {"FILLED", "REJECTED", "CANCELED", "CANCELLED"}
 
 
 class SupabaseExecutionStore:
@@ -65,7 +65,7 @@ class SupabaseExecutionStore:
             query={
                 "select": "order_id,client_order_id,instrument,state,filled_quantity",
                 "environment": f"eq.{self.environment}",
-                "state": "not.in.(FILLED,REJECTED,CANCELED)",
+                "state": "not.in.(FILLED,REJECTED,CANCELLED,CANCELED)",
                 "order_id": "not.is.null",
             },
         ) or []
@@ -85,15 +85,30 @@ class SupabaseExecutionStore:
         rows = self._request(
             "GET",
             "execution_positions",
-            query={
-                "select": "instrument,net_quantity",
-                "environment": f"eq.{self.environment}",
-            },
+            query={"select": "instrument,net_quantity", "environment": f"eq.{self.environment}"},
         ) or []
-        return tuple(
-            BrokerPositionTruth(str(row["instrument"]), self._decimal(row["net_quantity"]))
-            for row in rows
-        )
+        return tuple(BrokerPositionTruth(str(row["instrument"]), self._decimal(row["net_quantity"])) for row in rows)
+
+    def record_account_snapshot(self, account: Mapping[str, Any]) -> None:
+        """Persist one normalized broker account snapshot; secrets never belong in payload."""
+        captured_at = str(account.get("captured_at") or datetime.now(timezone.utc).isoformat())
+        payload = {
+            "snapshot_id": account.get("snapshot_id"),
+            "environment": self.environment,
+            "captured_at": captured_at,
+            "broker": str(account.get("broker") or "mt5"),
+            "account_login": None if account.get("login") is None else str(account.get("login")),
+            "server": None if account.get("server") is None else str(account.get("server")),
+            "currency": None if account.get("currency") is None else str(account.get("currency")),
+            "balance": str(account.get("balance", 0)),
+            "equity": str(account.get("equity", 0)),
+            "margin": None if account.get("margin") is None else str(account.get("margin")),
+            "margin_free": None if account.get("margin_free") is None else str(account.get("margin_free")),
+            "margin_level": None if account.get("margin_level") is None else str(account.get("margin_level")),
+            "trade_allowed": account.get("trade_allowed"),
+            "payload": {k: v for k, v in account.items() if k not in {"password", "api_key", "secret", "token"}},
+        }
+        self._request("POST", "execution_account_snapshots", body=payload, prefer="return=minimal")
 
     def record_snapshot(self, snapshot: BrokerSnapshot) -> None:
         payload = {
@@ -107,10 +122,7 @@ class SupabaseExecutionStore:
                 }
                 for o in snapshot.orders
             ],
-            "positions": [
-                {"instrument": p.instrument, "net_quantity": str(p.net_quantity)}
-                for p in snapshot.positions
-            ],
+            "positions": [{"instrument": p.instrument, "net_quantity": str(p.net_quantity)} for p in snapshot.positions],
             "captured_at": snapshot.captured_at,
         }
         self._request(
@@ -132,10 +144,7 @@ class SupabaseExecutionStore:
     def record_outcome(self, outcome: ReconciliationOutcome) -> None:
         now = datetime.now(timezone.utc).isoformat()
         details = {
-            "results": [
-                {"status": r.status, "drift_count": r.drift_count, "reasons": list(r.reasons)}
-                for r in outcome.results
-            ],
+            "results": [{"status": r.status, "drift_count": r.drift_count, "reasons": list(r.reasons)} for r in outcome.results],
             "position_drift": list(outcome.position_drift),
         }
         self._request(
@@ -157,11 +166,7 @@ class SupabaseExecutionStore:
         )
 
     def load_frozen(self) -> bool:
-        rows = self._request(
-            "GET",
-            "execution_control_state",
-            query={"select": "frozen", "environment": f"eq.{self.environment}", "limit": "1"},
-        ) or []
+        rows = self._request("GET", "execution_control_state", query={"select": "frozen", "environment": f"eq.{self.environment}", "limit": "1"}) or []
         return bool(rows[0]["frozen"]) if rows else True
 
     def set_frozen(self, frozen: bool, reason: str | None = None) -> None:
