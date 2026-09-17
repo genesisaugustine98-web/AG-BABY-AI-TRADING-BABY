@@ -1,4 +1,4 @@
-import os
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -64,11 +64,23 @@ def test_trade_deal_becomes_normalized_broker_record(monkeypatch):
     assert record.side == "BUY"
     assert str(record.quantity) == "1.25"
     assert str(record.price) == "150.125"
-    assert record.commission == -0.10
-    assert record.financing == -0.02
+    assert record.commission == Decimal("-0.10")
+    assert record.financing == Decimal("-0.02")
     assert record.metadata["entry"] == "IN"
     assert record.metadata["position_id"] == "303"
     assert mt5.calls == [("from", "to", {"group": "*USDJPY*"})]
+
+
+def test_deal_can_only_become_canonical_fill_after_explicit_internal_binding(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    record = MT5DealCollector(FakeMT5([deal()])).collect("from", "to")[0]
+    canonical = record.bind_internal_order("internal-order-1")
+
+    assert canonical.order_id == "internal-order-1"
+    assert canonical.broker_order_id == "202"
+    assert canonical.broker_fill_id == "101"
+    assert canonical.fill_id == "mt5:101"
+    assert canonical.metadata["order_id_resolution"] == "explicit_internal_order_binding"
 
 
 def test_non_trade_deals_are_excluded(monkeypatch):
