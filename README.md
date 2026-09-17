@@ -75,4 +75,4 @@ This release is a substantially integrated **research + execution-control founda
 
 ## Build baseline
 
-Integrated hardening baseline: 2026-09-17. Validate the exact branch head with the repository CI before promotion.
+Integrated hardening baseline: 2026-09-17. Exact synchronized branch validation: **165 Python tests passed; Next.js lint and production build passed on commit `3566c92eb034b2fd2bd929d87641e1fe97d5469f`.** Vercel deployment remains an external deployment-system check; the current cockpit tree itself is validated by GitHub CI.
