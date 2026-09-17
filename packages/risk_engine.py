@@ -54,17 +54,22 @@ class DeterministicRiskEngine:
     def __init__(self, limits: RiskLimits | None = None):
         self.limits = limits or RiskLimits()
 
-    def evaluate(
-        self,
-        *,
-        intent: TradeIntent,
-        context: AdmissionContext,
-        instrument: InstrumentSpec,
-    ) -> RiskDecision:
+    def evaluate(self, *, intent: TradeIntent, context: AdmissionContext, instrument: InstrumentSpec) -> RiskDecision:
         reasons: list[str] = []
         quantity = Decimal(str(intent.quantity))
+        side = intent.side.upper()
+        equity = Decimal(str(context.portfolio.equity))
+
         if quantity <= 0:
             reasons.append("NON_POSITIVE_QUANTITY")
+        if equity <= 0:
+            reasons.append("INVALID_EQUITY")
+        if side not in {"BUY", "SELL"}:
+            reasons.append("INVALID_SIDE")
+        if quantity < instrument.min_volume or quantity > instrument.max_volume:
+            reasons.append("BROKER_VOLUME_BOUNDS")
+        if instrument.volume_step <= 0 or (quantity / instrument.volume_step) % 1 != 0:
+            reasons.append("BROKER_VOLUME_STEP")
         if context.portfolio.frozen:
             reasons.append("ACCOUNT_FROZEN")
         if context.market.broker_health < self.limits.min_broker_health:
@@ -78,15 +83,25 @@ class DeterministicRiskEngine:
         if context.portfolio.open_positions >= self.limits.max_open_positions:
             reasons.append("OPEN_POSITION_LIMIT")
 
-        stop_distance = abs(context.quote.mid - intent.stop_price)
+        stop_price = getattr(intent, "stop_price", None)
+        if stop_price is None:
+            reasons.append("STOP_REQUIRED")
+            stop_distance = D0
+        else:
+            try:
+                stop_distance = abs(context.quote.mid - Decimal(str(stop_price)))
+            except (TypeError, ValueError):
+                stop_distance = D0
+                reasons.append("INVALID_STOP")
+
         try:
             loss_per_lot = cash_risk_per_lot(instrument, stop_distance)
         except ValueError:
             loss_per_lot = D0
-            reasons.append("INVALID_STOP_OR_TICK_SPEC")
+            if "STOP_REQUIRED" not in reasons:
+                reasons.append("INVALID_STOP_OR_TICK_SPEC")
 
         estimated_loss = max(D0, loss_per_lot * quantity)
-        equity = Decimal(str(context.portfolio.equity))
         order_risk = estimated_loss / equity if equity > 0 else ONE
         projected_gross = context.portfolio.gross_risk_fraction + order_risk
 
@@ -98,14 +113,14 @@ class DeterministicRiskEngine:
             reasons.append("GROSS_RISK_LIMIT")
         if intent.risk_fraction > self.limits.max_order_risk:
             reasons.append("DECLARED_RISK_LIMIT")
-        if intent.side.upper() == "BUY" and intent.stop_price >= context.quote.mid:
+        if stop_price is not None and side == "BUY" and Decimal(str(stop_price)) >= context.quote.mid:
             reasons.append("BUY_STOP_NOT_BELOW_MARKET")
-        if intent.side.upper() == "SELL" and intent.stop_price <= context.quote.mid:
+        if stop_price is not None and side == "SELL" and Decimal(str(stop_price)) <= context.quote.mid:
             reasons.append("SELL_STOP_NOT_ABOVE_MARKET")
 
         return RiskDecision(
             approved=not reasons,
-            reasons=tuple(reasons),
+            reasons=tuple(dict.fromkeys(reasons)),
             requested_quantity=quantity,
             estimated_loss=estimated_loss,
             order_risk_fraction=order_risk,
