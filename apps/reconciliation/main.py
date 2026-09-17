@@ -2,8 +2,8 @@
 
 This worker runs only in a trusted server/worker environment. Broker submissions are
 not performed here; the loop ingests actual MT5 deals, binds them to durable internal
-orders, atomically accounts the confirmed fills, and then reconciles current broker
-truth before execution can be considered available.
+orders, atomically accounts the confirmed fills, captures account truth, and then
+reconciles current broker truth before execution can be considered available.
 """
 from __future__ import annotations
 
@@ -38,8 +38,9 @@ def main() -> None:
     try:
         while True:
             try:
-                # Deal ingestion precedes snapshot reconciliation so the internal
-                # order/position projection reflects broker-confirmed executions.
+                account = gateway.account_snapshot()
+                reconciliation_store.record_account_snapshot(account)
+
                 fill_result, cursor = ingestion.ingest_checkpointed(
                     checkpoint_store=fill_store,
                     environment="demo",
@@ -66,8 +67,6 @@ def main() -> None:
                     f"trading_permitted={service.trading_permitted}"
                 )
             except Exception as exc:
-                # The service/store has already attempted to persist the freeze on
-                # reconciliation failures; ingestion failures are explicitly frozen here.
                 reconciliation_store.set_frozen(True, reason=f"worker_exception:{type(exc).__name__}")
                 print(f"reconciliation error={type(exc).__name__}")
             time.sleep(interval)
