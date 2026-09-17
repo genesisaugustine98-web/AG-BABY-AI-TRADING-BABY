@@ -1,9 +1,8 @@
 """Demo-only MT5 order submission and broker-truth lookup.
 
-This adapter is intentionally conservative: it refuses non-demo environments,
-validates broker symbol constraints, calls order_check before order_send, and
-returns acknowledgement only. Executed quantity enters accounting only through
-the separate deal-history ingestion path.
+This adapter validates broker constraints, calls order_check before order_send, and
+returns acknowledgement only. Executed quantity enters accounting only through the
+separate MT5 deal-history ingestion path.
 """
 from __future__ import annotations
 
@@ -48,10 +47,12 @@ class DemoOnlyMT5OrderAdapter:
         if info is None:
             raise RuntimeError(f"symbol_info unavailable:{symbol}")
         if getattr(info, "visible", True) is False:
-            self.mt5.symbol_select(symbol, True)
+            selected = self.mt5.symbol_select(symbol, True)
+            if selected is False:
+                raise RuntimeError(f"symbol_select failed:{symbol}")
             info = self.mt5.symbol_info(symbol)
             if info is None:
-                raise RuntimeError(f"symbol_select failed:{symbol}")
+                raise RuntimeError(f"symbol_info unavailable after select:{symbol}")
         return info
 
     def _request(self, request: SubmissionRequest) -> tuple[dict[str, Any], Any]:
@@ -74,8 +75,9 @@ class DemoOnlyMT5OrderAdapter:
         else:
             raise ValueError("side must be BUY or SELL")
 
+        order_kind = request.order_type.upper()
         action = getattr(self.mt5, "TRADE_ACTION_DEAL")
-        if request.order_type.upper() in {"LIMIT", "BUY_LIMIT", "SELL_LIMIT"}:
+        if order_kind in {"LIMIT", "BUY_LIMIT", "SELL_LIMIT"}:
             action = getattr(self.mt5, "TRADE_ACTION_PENDING")
             if side == "BUY":
                 order_type = getattr(self.mt5, "ORDER_TYPE_BUY_LIMIT")
@@ -83,34 +85,36 @@ class DemoOnlyMT5OrderAdapter:
                 order_type = getattr(self.mt5, "ORDER_TYPE_SELL_LIMIT")
         price = Decimal(str(request.limit_price)) if request.limit_price is not None else default_price
 
-        payload = {
+        stop = Decimal(str(request.stop_price)) if request.stop_price is not None else Decimal("0")
+        target = Decimal(str(request.target_price)) if request.target_price is not None else Decimal("0")
+        if stop and ((side == "BUY" and stop >= default_price) or (side == "SELL" and stop <= default_price)):
+            raise ValueError("protective stop is on the wrong side of the market")
+        if target and ((side == "BUY" and target <= default_price) or (side == "SELL" and target >= default_price)):
+            raise ValueError("protective target is on the wrong side of the market")
+
+        return {
             "action": action,
             "symbol": request.symbol,
             "volume": float(volume),
             "type": order_type,
             "price": float(price),
-            "sl": float(request.limit_price if False else 0),
-            "tp": float(0),
+            "sl": float(stop),
+            "tp": float(target),
             "deviation": int(os.getenv("MT5_MAX_DEVIATION_POINTS", "20")),
             "magic": int(os.getenv("MT5_MAGIC", "260917")),
             "comment": request.client_order_id,
             "type_time": getattr(self.mt5, "ORDER_TIME_GTC", 0),
             "type_filling": getattr(info, "filling_mode", getattr(self.mt5, "ORDER_FILLING_FOK", 0)),
-        }
-        # Stop/target values live in the TradeIntent, while MT5's request object
-        # requires exact broker-side price semantics. The execution kernel passes
-        # them through a richer adapter in the next stage; this safe baseline keeps
-        # the demo submission path market-only unless the order type is explicit.
-        return payload, info
+        }, info
 
     def submit(self, request: SubmissionRequest) -> SubmissionResult:
         payload, _ = self._request(request)
         check = self.mt5.order_check(SimpleNamespace(**payload))
         if check is None:
             raise RuntimeError(f"order_check failed:{self.mt5.last_error()}")
-        check_retcode = getattr(check, "retcode", 0)
-        failed_check = getattr(self.mt5, "TRADE_RETCODE_DONE", -1)
-        if check_retcode not in {0, failed_check}:
+        check_retcode = int(getattr(check, "retcode", 0))
+        done_code = getattr(self.mt5, "TRADE_RETCODE_DONE", -1)
+        if check_retcode not in {0, done_code}:
             return SubmissionResult("REJECTED", reason=f"order_check_retcode:{check_retcode}")
         result = self.mt5.order_send(SimpleNamespace(**payload))
         if result is None:
@@ -143,8 +147,7 @@ class DemoOnlyMT5OrderAdapter:
             raise RuntimeError(f"ambiguous_active_order:{client_order_id}")
         if matches:
             order = matches[0]
-            state = str(getattr(order, "state", ""))
-            return SubmissionResult("ACCEPTED", broker_order_id=str(getattr(order, "ticket")), reason=state)
+            return SubmissionResult("ACCEPTED", broker_order_id=str(getattr(order, "ticket")), reason=str(getattr(order, "state", "")))
 
         history = self.mt5.history_orders_get()
         if history is None:
@@ -152,22 +155,14 @@ class DemoOnlyMT5OrderAdapter:
         matches = [o for o in history if str(getattr(o, "comment", "")).strip() == client_order_id]
         if not matches:
             return None
-        if len(matches) > 1:
-            matches = sorted(matches, key=lambda o: (getattr(o, "time_done_msc", 0), getattr(o, "ticket", 0)), reverse=True)
+        matches = sorted(matches, key=lambda o: (getattr(o, "time_done_msc", 0), getattr(o, "ticket", 0)), reverse=True)
         order = matches[0]
         state = str(getattr(order, "state", ""))
-        rejected = "REJECT" in state.upper() or "CANCEL" in state.upper() or "EXPIRE" in state.upper()
-        return SubmissionResult(
-            "REJECTED" if rejected else "ACCEPTED",
-            broker_order_id=str(getattr(order, "ticket")),
-            reason=state,
-        )
+        rejected = any(token in state.upper() for token in ("REJECT", "CANCEL", "EXPIRE"))
+        return SubmissionResult("REJECTED" if rejected else "ACCEPTED", broker_order_id=str(getattr(order, "ticket")), reason=state)
 
     def cancel(self, broker_order_id: str) -> SubmissionResult:
-        request = {
-            "action": getattr(self.mt5, "TRADE_ACTION_REMOVE"),
-            "order": int(broker_order_id),
-        }
+        request = {"action": getattr(self.mt5, "TRADE_ACTION_REMOVE"), "order": int(broker_order_id)}
         result = self.mt5.order_send(SimpleNamespace(**request))
         if result is None:
             raise RuntimeError(f"order_cancel failed:{self.mt5.last_error()}")
