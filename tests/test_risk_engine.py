@@ -9,7 +9,7 @@ def spec():
 
 
 def intent():
-    return TradeIntent("i1", "s1", "v1", "p1", "USDJPY", "BUY", Decimal("1"), "MARKET", None, Decimal("149.0"), Decimal("152.0"), 1000, 2000, Decimal("0.001"), Decimal("0.005"), 300, frozenset({"e1"}))
+    return TradeIntent("i1", "s1", "v1", "p1", "USDJPY", "BUY", Decimal("0.9"), "MARKET", None, Decimal("149.0"), Decimal("152.0"), 1000, 2000, Decimal("0.001"), Decimal("0.005"), 300, frozenset({"e1"}))
 
 
 def context(**changes):
