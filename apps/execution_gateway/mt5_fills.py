@@ -32,6 +32,20 @@ class CanonicalFillSink(Protocol):
     def ingest(self, fill: BrokerConfirmedFill) -> PositionState: ...
 
 
+class IngestionCheckpointStore(Protocol):
+    def load_ingestion_checkpoint(self, *, environment: str, source: str, stream: str) -> "DealHistoryCursor": ...
+
+    def save_ingestion_checkpoint(
+        self,
+        *,
+        environment: str,
+        source: str,
+        stream: str,
+        cursor: "DealHistoryCursor",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None: ...
+
+
 _ENTRY_NAMES = {
     0: "IN",
     1: "OUT",
@@ -123,6 +137,19 @@ def _execution_time(deal: Any) -> str:
         return datetime.fromtimestamp(int(raw_seconds), tz=timezone.utc).isoformat()
     except (TypeError, ValueError, OverflowError, OSError) as exc:
         raise ValueError("deal execution time is invalid") from exc
+
+
+def _deal_time_msc(deal: BrokerDealRecord) -> int:
+    raw = deal.metadata.get("deal_time_msc")
+    if raw is not None:
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            pass
+    timestamp = datetime.fromisoformat(deal.filled_at.replace("Z", "+00:00"))
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return int(timestamp.timestamp() * 1000)
 
 
 def _decimal(value: Any, field_name: str) -> Decimal:
@@ -245,6 +272,44 @@ class MT5FillIngestionService:
             self.sink.ingest(fill)
         return FillBindingResult(applied=len(bound), unresolved=tuple(unresolved))
 
+    def ingest_checkpointed(
+        self,
+        *,
+        checkpoint_store: IngestionCheckpointStore,
+        environment: str,
+        source: str,
+        stream: str,
+        now_msc: int,
+        group: str | None = None,
+    ) -> tuple[FillBindingResult, DealHistoryCursor]:
+        cursor = checkpoint_store.load_ingestion_checkpoint(
+            environment=environment,
+            source=source,
+            stream=stream,
+        )
+        date_from, date_to = cursor.window(now_msc)
+        result = self.ingest_window(date_from, date_to, group=group)
+
+        completed_through = int(now_msc)
+        if result.unresolved:
+            # Do not move past an unresolved broker execution. Keeping the earliest
+            # unresolved timestamp in/near the next window guarantees it is retried.
+            earliest_unresolved = min(_deal_time_msc(deal) for deal in result.unresolved)
+            completed_through = max(cursor.watermark_msc, earliest_unresolved)
+        next_cursor = cursor.advance(completed_through)
+        checkpoint_store.save_ingestion_checkpoint(
+            environment=environment,
+            source=source,
+            stream=stream,
+            cursor=next_cursor,
+            metadata={
+                "window_end_msc": int(now_msc),
+                "applied": result.applied,
+                "unresolved": len(result.unresolved),
+            },
+        )
+        return result, next_cursor
+
 
 def load_mt5() -> MT5DealsAPI:
     """Import the optional MetaTrader5 module only at execution-worker runtime."""
@@ -258,6 +323,7 @@ __all__ = [
     "CanonicalFillSink",
     "DealHistoryCursor",
     "FillBindingResult",
+    "IngestionCheckpointStore",
     "InternalOrderResolver",
     "MT5DealCollector",
     "MT5FillIngestionService",
