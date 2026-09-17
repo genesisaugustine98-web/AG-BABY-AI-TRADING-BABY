@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from apps.execution_gateway.mt5_fills import BrokerDealRecord, MT5DealCollector
 from packages.broker_truth import BrokerPositionTruth, BrokerSnapshot
 from packages.execution_ledger import BrokerOrderTruth
 
@@ -113,6 +114,12 @@ class DemoOnlyMT5Gateway:
             for instrument, quantity in sorted(by_instrument.items())
         )
         return BrokerSnapshot(tuple(orders), positions, captured_at)
+
+    def confirmed_deals(self, date_from: Any, date_to: Any, *, group: str | None = None) -> tuple[BrokerDealRecord, ...]:
+        """Return actual broker execution deals through the same connected MT5 session."""
+        if not self.connected:
+            raise RuntimeError("MT5 gateway is not connected")
+        return MT5DealCollector(self._import()).collect(date_from, date_to, group=group)
 
     def shutdown(self):
         if self.connected:
