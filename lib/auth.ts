@@ -5,13 +5,13 @@ import { cookies } from "next/headers";
 
 const COOKIE_NAME = "ag_cockpit_access";
 
-function digest(value: string) {
+export function digestAccessToken(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function matches(expected: string, provided: string) {
-  const a = Buffer.from(digest(expected), "utf8");
-  const b = Buffer.from(provided, "utf8");
+export function verifyAccessToken(expected: string, provided: string) {
+  const a = Buffer.from(digestAccessToken(expected), "utf8");
+  const b = Buffer.from(digestAccessToken(provided), "utf8");
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
@@ -24,8 +24,10 @@ export async function isCockpitAuthorized() {
   if (!expected) return false;
   const jar = await cookies();
   const tokenHash = jar.get(COOKIE_NAME)?.value || "";
-  return matches(expected, tokenHash);
+  const expectedHash = digestAccessToken(expected);
+  const actual = Buffer.from(tokenHash, "utf8");
+  const wanted = Buffer.from(expectedHash, "utf8");
+  return actual.length === wanted.length && timingSafeEqual(actual, wanted);
 }
 
 export const cockpitCookie = COOKIE_NAME;
-export const digestAccessToken = digest;
