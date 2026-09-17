@@ -41,6 +41,36 @@ _ENTRY_NAMES = {
 
 
 @dataclass(frozen=True)
+class DealHistoryCursor:
+    """Monotonic restart cursor with a replay overlap around the last watermark."""
+
+    watermark_msc: int = 0
+    overlap_msc: int = 5000
+
+    def __post_init__(self) -> None:
+        if self.watermark_msc < 0:
+            raise ValueError("watermark_msc must be >= 0")
+        if self.overlap_msc < 0:
+            raise ValueError("overlap_msc must be >= 0")
+
+    def window(self, now_msc: int) -> tuple[datetime, datetime]:
+        now_msc = int(now_msc)
+        if now_msc < self.watermark_msc:
+            raise ValueError("now_msc must be >= watermark_msc")
+        start_msc = max(0, self.watermark_msc - self.overlap_msc)
+        return (
+            datetime.fromtimestamp(start_msc / 1000, tz=timezone.utc),
+            datetime.fromtimestamp(now_msc / 1000, tz=timezone.utc),
+        )
+
+    def advance(self, completed_through_msc: int) -> "DealHistoryCursor":
+        completed_through_msc = int(completed_through_msc)
+        if completed_through_msc < self.watermark_msc:
+            raise ValueError("checkpoint cannot move backwards")
+        return DealHistoryCursor(completed_through_msc, self.overlap_msc)
+
+
+@dataclass(frozen=True)
 class BrokerDealRecord:
     """Raw normalized broker execution record; not yet bound to an internal order."""
 
@@ -226,6 +256,7 @@ def load_mt5() -> MT5DealsAPI:
 __all__ = [
     "BrokerDealRecord",
     "CanonicalFillSink",
+    "DealHistoryCursor",
     "FillBindingResult",
     "InternalOrderResolver",
     "MT5DealCollector",
