@@ -72,3 +72,7 @@ GitHub remains the source of truth. External platforms consume versioned artifac
 ## Status boundary
 
 This release is a substantially integrated **research + execution-control foundation**, not a claim of trading profitability or a fully autonomous production trading desk. Production-quality live trading requires a separate reviewed authorization and additional operational controls beyond the demo boundary.
+
+## Build baseline
+
+Integrated hardening baseline: 2026-09-17. Validate the exact branch head with the repository CI before promotion.
