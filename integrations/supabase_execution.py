@@ -13,7 +13,7 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import asdict
+import hashlib
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Mapping
@@ -71,6 +71,7 @@ class SupabaseExecutionStore:
             "financing": str(fill.financing),
             "metadata": {
                 **dict(fill.metadata),
+                "instrument": fill.instrument,
                 "accounting_fingerprint": fill.fingerprint,
                 "source_truth": "broker_confirmed_fill",
             },
@@ -98,21 +99,15 @@ class SupabaseExecutionStore:
             "execution_fills",
             query={
                 "select": "fill_id,order_id,broker_fill_id,filled_at,quantity,price,side,venue,commission,financing,metadata",
-                "order_id": "not.is.null",
-                "filled_at": "not.is.null",
-                "metadata": "not.is.null",
-                "order_by": "filled_at.asc,fill_id.asc",
+                "metadata->>instrument": f"eq.{instrument}",
+                "metadata->>source_truth": "eq.broker_confirmed_fill",
+                "order": "filled_at.asc,fill_id.asc",
             },
         ) or []
         fills: list[BrokerConfirmedFill] = []
         for row in rows:
             metadata = dict(row.get("metadata") or {})
-            if metadata.get("source_truth") != "broker_confirmed_fill":
-                continue
-            try:
-                source_instrument = metadata["instrument"]
-            except KeyError:
-                continue
+            source_instrument = metadata.get("instrument")
             if source_instrument != instrument:
                 continue
             fills.append(
@@ -134,8 +129,6 @@ class SupabaseExecutionStore:
         return tuple(fills)
 
     def upsert_position(self, *, environment: str, state: PositionState) -> None:
-        import hashlib
-
         position_id = "pos-" + hashlib.sha256(f"{environment}:{state.instrument}".encode("utf-8")).hexdigest()[:24]
         payload = {
             "position_id": position_id,
