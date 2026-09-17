@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { authConfigured, cockpitCookie, digestAccessToken, verifyAccessToken } from "../../../lib/auth";
+import { authConfigured, cockpitCookie, digestAccessToken, verifyAccessToken } from "../../../../lib/auth";
 
 export const runtime = "nodejs";
 
