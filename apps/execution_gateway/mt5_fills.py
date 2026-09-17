@@ -5,6 +5,9 @@ DEAL_TYPE_BUY/SELL records only and preserves broker-side deal metadata. It does
 infer a fill from an order acknowledgement. Because a broker deal ticket is not, by
 itself, proof of the internal order/intent that caused it, binding to an internal
 order_id is an explicit second step.
+
+Accounting convention: commission is stored as a positive fee cost; financing/swap
+remains signed because it can be a credit or a debit.
 """
 from __future__ import annotations
 
@@ -46,18 +49,12 @@ class IngestionCheckpointStore(Protocol):
     ) -> None: ...
 
 
-_ENTRY_NAMES = {
-    0: "IN",
-    1: "OUT",
-    2: "INOUT",
-    3: "OUT_BY",
-}
+_ENTRY_NAMES = {0: "IN", 1: "OUT", 2: "INOUT", 3: "OUT_BY"}
 
 
 @dataclass(frozen=True)
 class DealHistoryCursor:
     """Monotonic restart cursor with a replay overlap around the last watermark."""
-
     watermark_msc: int = 0
     overlap_msc: int = 5000
 
@@ -86,8 +83,6 @@ class DealHistoryCursor:
 
 @dataclass(frozen=True)
 class BrokerDealRecord:
-    """Raw normalized broker execution record; not yet bound to an internal order."""
-
     broker_fill_id: str
     broker_order_id: str
     instrument: str
@@ -168,7 +163,6 @@ class MT5DealCollector:
     def __init__(self, mt5_api: MT5DealsAPI):
         self.mt5 = mt5_api
         import os
-
         if os.getenv("EXECUTION_ENV", "demo") != "demo":
             raise RuntimeError("MT5 deal collection is demo-only")
 
@@ -188,8 +182,6 @@ class MT5DealCollector:
             elif deal_type == self.mt5.DEAL_TYPE_SELL:
                 side = "SELL"
             else:
-                # Balance/credit/commission/corporate-action and other non-trade
-                # history records are deliberately excluded from execution fills.
                 continue
 
             ticket = int(getattr(deal, "ticket", 0))
@@ -208,6 +200,8 @@ class MT5DealCollector:
             if price <= 0:
                 raise ValueError(f"trade deal {ticket} has non-positive price")
 
+            raw_commission = _decimal(getattr(deal, "commission", 0), "commission")
+            financing = _decimal(getattr(deal, "swap", 0), "swap")
             entry = getattr(deal, "entry", None)
             normalized.append(
                 BrokerDealRecord(
@@ -218,8 +212,8 @@ class MT5DealCollector:
                     quantity=quantity,
                     price=price,
                     filled_at=_execution_time(deal),
-                    commission=_decimal(getattr(deal, "commission", 0), "commission"),
-                    financing=_decimal(getattr(deal, "swap", 0), "swap"),
+                    commission=abs(raw_commission),
+                    financing=financing,
                     metadata={
                         "source_truth": "broker_confirmed_deal",
                         "broker": "mt5",
@@ -232,6 +226,7 @@ class MT5DealCollector:
                         "external_id": getattr(deal, "external_id", "") or "",
                         "fee": str(getattr(deal, "fee", 0)),
                         "profit": str(getattr(deal, "profit", 0)),
+                        "raw_commission": str(raw_commission),
                         "deal_time_msc": getattr(deal, "time_msc", None),
                     },
                 )
@@ -248,8 +243,6 @@ class FillBindingResult:
 
 
 class MT5FillIngestionService:
-    """Resolve collected broker deals before they can enter canonical accounting."""
-
     def __init__(self, collector: MT5DealCollector, resolver: InternalOrderResolver, sink: CanonicalFillSink):
         self.collector = collector
         self.resolver = resolver
@@ -265,9 +258,6 @@ class MT5FillIngestionService:
                 unresolved.append(deal)
                 continue
             bound.append(deal.bind_internal_order(internal_order_id))
-
-        # Resolve everything before starting canonical writes so unresolved identity
-        # never gets partially mixed into the confirmed-fill stream.
         for fill in bound:
             self.sink.ingest(fill)
         return FillBindingResult(applied=len(bound), unresolved=tuple(unresolved))
@@ -282,18 +272,11 @@ class MT5FillIngestionService:
         now_msc: int,
         group: str | None = None,
     ) -> tuple[FillBindingResult, DealHistoryCursor]:
-        cursor = checkpoint_store.load_ingestion_checkpoint(
-            environment=environment,
-            source=source,
-            stream=stream,
-        )
+        cursor = checkpoint_store.load_ingestion_checkpoint(environment=environment, source=source, stream=stream)
         date_from, date_to = cursor.window(now_msc)
         result = self.ingest_window(date_from, date_to, group=group)
-
         completed_through = int(now_msc)
         if result.unresolved:
-            # Do not move past an unresolved broker execution. Keeping the earliest
-            # unresolved timestamp in/near the next window guarantees it is retried.
             earliest_unresolved = min(_deal_time_msc(deal) for deal in result.unresolved)
             completed_through = max(cursor.watermark_msc, earliest_unresolved)
         next_cursor = cursor.advance(completed_through)
@@ -302,31 +285,17 @@ class MT5FillIngestionService:
             source=source,
             stream=stream,
             cursor=next_cursor,
-            metadata={
-                "window_end_msc": int(now_msc),
-                "applied": result.applied,
-                "unresolved": len(result.unresolved),
-            },
+            metadata={"window_end_msc": int(now_msc), "applied": result.applied, "unresolved": len(result.unresolved)},
         )
         return result, next_cursor
 
 
 def load_mt5() -> MT5DealsAPI:
-    """Import the optional MetaTrader5 module only at execution-worker runtime."""
     import MetaTrader5 as mt5
-
     return mt5
 
 
 __all__ = [
-    "BrokerDealRecord",
-    "CanonicalFillSink",
-    "DealHistoryCursor",
-    "FillBindingResult",
-    "IngestionCheckpointStore",
-    "InternalOrderResolver",
-    "MT5DealCollector",
-    "MT5FillIngestionService",
-    "MT5DealsAPI",
-    "load_mt5",
+    "BrokerDealRecord", "CanonicalFillSink", "DealHistoryCursor", "FillBindingResult", "IngestionCheckpointStore",
+    "InternalOrderResolver", "MT5DealCollector", "MT5FillIngestionService", "MT5DealsAPI", "load_mt5",
 ]
