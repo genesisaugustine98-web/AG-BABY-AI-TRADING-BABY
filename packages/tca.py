@@ -112,8 +112,8 @@ def analyze_tca(
 
     markout_values: list[tuple[str, Decimal]] = []
     for observation in sorted(markouts, key=lambda value: (value.horizon, value.observed_at)):
-        favorable_price = _side_sign(side) * (observation.mid - vwap) * Decimal("-1")
-        # Positive markout_bps means the market moved favorably after execution.
+        # Positive markout means the market moved favorably after execution.
+        favorable_price = _side_sign(side) * (observation.mid - vwap)
         favorable_bps = (favorable_price / vwap) * Decimal("10000")
         markout_values.append((observation.horizon, favorable_bps))
 
