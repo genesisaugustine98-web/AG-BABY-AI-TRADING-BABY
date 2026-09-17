@@ -66,11 +66,18 @@ def test_trade_deal_becomes_normalized_broker_record(monkeypatch):
     assert record.side == "BUY"
     assert str(record.quantity) == "1.25"
     assert str(record.price) == "150.125"
-    assert record.commission == Decimal("-0.10")
+    assert record.commission == Decimal("0.10")
     assert record.financing == Decimal("-0.02")
+    assert record.metadata["raw_commission"] == "-0.1"
     assert record.metadata["entry"] == "IN"
     assert record.metadata["position_id"] == "303"
     assert mt5.calls == [("from", "to", {"group": "*USDJPY*"})]
+
+
+def test_positive_swap_is_preserved_as_financing_credit(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    record = MT5DealCollector(FakeMT5([deal(swap=0.03)])).collect("from", "to")[0]
+    assert record.financing == Decimal("0.03")
 
 
 def test_deal_can_only_become_canonical_fill_after_explicit_internal_binding(monkeypatch):
