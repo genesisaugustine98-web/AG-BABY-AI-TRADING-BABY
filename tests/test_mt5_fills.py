@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from apps.execution_gateway.mt5_fills import DealHistoryCursor, MT5DealCollector, MT5FillIngestionService
+from integrations.supabase_execution import SupabaseExecutionStore
 
 
 class FakeMT5:
@@ -107,6 +108,116 @@ def test_ingestion_service_leaves_unresolved_deals_out_of_canonical_sink(monkeyp
     assert len(result.unresolved) == 1
     assert result.unresolved[0].broker_order_id == "204"
     assert [fill.order_id for fill in sink.fills] == ["internal-order-1"]
+
+
+def test_checkpointed_ingestion_advances_after_clean_batch(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    collector = MT5DealCollector(FakeMT5([deal(time_msc=15_000)]))
+
+    class Resolver:
+        def resolve(self, broker_order_id, instrument, side):
+            return "internal-order-1"
+
+    class Sink:
+        def __init__(self):
+            self.fills = []
+
+        def ingest(self, fill):
+            self.fills.append(fill)
+            return None
+
+    class CheckpointStore:
+        def __init__(self):
+            self.cursor = DealHistoryCursor(watermark_msc=10_000, overlap_msc=5_000)
+            self.saved = []
+
+        def load_ingestion_checkpoint(self, **kwargs):
+            return self.cursor
+
+        def save_ingestion_checkpoint(self, **kwargs):
+            self.saved.append(kwargs)
+            self.cursor = kwargs["cursor"]
+
+    checkpoints = CheckpointStore()
+    result, next_cursor = MT5FillIngestionService(collector, Resolver(), Sink()).ingest_checkpointed(
+        checkpoint_store=checkpoints,
+        environment="demo",
+        source="mt5",
+        stream="deals",
+        now_msc=20_000,
+    )
+
+    assert result.applied == 1
+    assert result.unresolved == ()
+    assert next_cursor.watermark_msc == 20_000
+    assert checkpoints.saved[-1]["metadata"]["applied"] == 1
+
+
+def test_checkpointed_ingestion_holds_watermark_at_earliest_unresolved_deal(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    collector = MT5DealCollector(FakeMT5([deal(ticket=101, time_msc=12_000)]))
+
+    class Resolver:
+        def resolve(self, broker_order_id, instrument, side):
+            return None
+
+    class Sink:
+        def ingest(self, fill):
+            raise AssertionError("unresolved deal must never reach sink")
+
+    class CheckpointStore:
+        def __init__(self):
+            self.cursor = DealHistoryCursor(watermark_msc=10_000, overlap_msc=5_000)
+            self.saved = []
+
+        def load_ingestion_checkpoint(self, **kwargs):
+            return self.cursor
+
+        def save_ingestion_checkpoint(self, **kwargs):
+            self.saved.append(kwargs)
+
+    checkpoints = CheckpointStore()
+    result, next_cursor = MT5FillIngestionService(collector, Resolver(), Sink()).ingest_checkpointed(
+        checkpoint_store=checkpoints,
+        environment="demo",
+        source="mt5",
+        stream="deals",
+        now_msc=20_000,
+    )
+
+    assert result.applied == 0
+    assert len(result.unresolved) == 1
+    assert next_cursor.watermark_msc == 12_000
+
+
+def test_supabase_checkpoint_roundtrip_payload(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "server-secret")
+    store = SupabaseExecutionStore()
+    calls = []
+
+    def fake_request(method, table, **kwargs):
+        calls.append((method, table, kwargs))
+        if method == "GET":
+            return [{"watermark_msc": "12345", "overlap_msc": "5000"}]
+        return None
+
+    store._request = fake_request
+    cursor = store.load_ingestion_checkpoint(environment="demo", source="mt5", stream="deals")
+    assert cursor == DealHistoryCursor(12_345, 5_000)
+
+    store.save_ingestion_checkpoint(
+        environment="demo",
+        source="mt5",
+        stream="deals",
+        cursor=DealHistoryCursor(20_000, 5_000),
+        metadata={"applied": 3},
+    )
+    method, table, kwargs = calls[-1]
+    assert method == "POST"
+    assert table == "execution_ingestion_checkpoints"
+    assert kwargs["query"]["on_conflict"] == "environment,source,stream"
+    assert kwargs["payload"]["watermark_msc"] == 20_000
 
 
 def test_cursor_replays_an_overlap_before_advancing(monkeypatch):
