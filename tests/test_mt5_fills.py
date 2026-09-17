@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from apps.execution_gateway.mt5_fills import MT5DealCollector
+from apps.execution_gateway.mt5_fills import MT5DealCollector, MT5FillIngestionService
 
 
 class FakeMT5:
@@ -81,6 +81,31 @@ def test_deal_can_only_become_canonical_fill_after_explicit_internal_binding(mon
     assert canonical.broker_fill_id == "101"
     assert canonical.fill_id == "mt5:101"
     assert canonical.metadata["order_id_resolution"] == "explicit_internal_order_binding"
+
+
+def test_ingestion_service_leaves_unresolved_deals_out_of_canonical_sink(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    collector = MT5DealCollector(FakeMT5([deal(), deal(ticket=102, order=204)]))
+
+    class Resolver:
+        def resolve(self, broker_order_id, instrument, side):
+            return "internal-order-1" if broker_order_id == "202" else None
+
+    class Sink:
+        def __init__(self):
+            self.fills = []
+
+        def ingest(self, fill):
+            self.fills.append(fill)
+            return None
+
+    sink = Sink()
+    result = MT5FillIngestionService(collector, Resolver(), sink).ingest_window("from", "to")
+
+    assert result.applied == 1
+    assert len(result.unresolved) == 1
+    assert result.unresolved[0].broker_order_id == "204"
+    assert [fill.order_id for fill in sink.fills] == ["internal-order-1"]
 
 
 def test_non_trade_deals_are_excluded(monkeypatch):
