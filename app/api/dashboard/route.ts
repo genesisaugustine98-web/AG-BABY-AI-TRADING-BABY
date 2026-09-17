@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getDashboardSnapshot } from "@/lib/dashboard";
-import { isCockpitAuthorized } from "@/lib/auth";
+import { getDashboardSnapshot } from "../../../lib/dashboard";
+import { isCockpitAuthorized } from "../../../lib/auth";
 
 export const dynamic = "force-dynamic";
 
