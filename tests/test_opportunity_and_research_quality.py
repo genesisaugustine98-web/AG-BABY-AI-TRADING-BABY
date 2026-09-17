@@ -37,11 +37,11 @@ def test_calibration_and_brier_are_explicit_metrics():
     probabilities = [Decimal("0.9"), Decimal("0.1"), Decimal("0.8"), Decimal("0.2")]
     outcomes = [1, 0, 1, 0]
     assert brier_score(probabilities, outcomes) == Decimal("0.025")
-    assert expected_calibration_error(probabilities, outcomes) == Decimal("0")
+    assert expected_calibration_error(probabilities, outcomes) == Decimal("0.150")
 
 
 def test_max_drawdown_is_peak_to_trough():
-    assert max_drawdown([Decimal("0.10"), Decimal("-0.20"), Decimal("0.05")]) == Decimal("0.12")
+    assert max_drawdown([Decimal("0.10"), Decimal("-0.20"), Decimal("0.05")]) == Decimal("0.20")
 
 
 def test_pit_evidence_filters_unreleased_data():
