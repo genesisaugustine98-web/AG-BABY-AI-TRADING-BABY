@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Mapping, Protocol
 
-from packages.fill_accounting import BrokerConfirmedFill
+from packages.fill_accounting import BrokerConfirmedFill, PositionState
 
 
 class MT5DealsAPI(Protocol):
@@ -22,6 +22,14 @@ class MT5DealsAPI(Protocol):
 
     def history_deals_get(self, date_from: Any, date_to: Any, **kwargs: Any) -> Any: ...
     def last_error(self) -> Any: ...
+
+
+class InternalOrderResolver(Protocol):
+    def resolve(self, broker_order_id: str, instrument: str, side: str) -> str | None: ...
+
+
+class CanonicalFillSink(Protocol):
+    def ingest(self, fill: BrokerConfirmedFill) -> PositionState: ...
 
 
 _ENTRY_NAMES = {
@@ -176,6 +184,38 @@ class MT5DealCollector:
         return tuple(normalized)
 
 
+@dataclass(frozen=True)
+class FillBindingResult:
+    applied: int
+    unresolved: tuple[BrokerDealRecord, ...]
+
+
+class MT5FillIngestionService:
+    """Resolve collected broker deals before they can enter canonical accounting."""
+
+    def __init__(self, collector: MT5DealCollector, resolver: InternalOrderResolver, sink: CanonicalFillSink):
+        self.collector = collector
+        self.resolver = resolver
+        self.sink = sink
+
+    def ingest_window(self, date_from: Any, date_to: Any, *, group: str | None = None) -> FillBindingResult:
+        deals = self.collector.collect(date_from, date_to, group=group)
+        bound: list[BrokerConfirmedFill] = []
+        unresolved: list[BrokerDealRecord] = []
+        for deal in deals:
+            internal_order_id = self.resolver.resolve(deal.broker_order_id, deal.instrument, deal.side)
+            if internal_order_id is None:
+                unresolved.append(deal)
+                continue
+            bound.append(deal.bind_internal_order(internal_order_id))
+
+        # Resolve everything before starting canonical writes so unresolved identity
+        # never gets partially mixed into the confirmed-fill stream.
+        for fill in bound:
+            self.sink.ingest(fill)
+        return FillBindingResult(applied=len(bound), unresolved=tuple(unresolved))
+
+
 def load_mt5() -> MT5DealsAPI:
     """Import the optional MetaTrader5 module only at execution-worker runtime."""
     import MetaTrader5 as mt5
@@ -183,4 +223,13 @@ def load_mt5() -> MT5DealsAPI:
     return mt5
 
 
-__all__ = ["BrokerDealRecord", "MT5DealCollector", "MT5DealsAPI", "load_mt5"]
+__all__ = [
+    "BrokerDealRecord",
+    "CanonicalFillSink",
+    "FillBindingResult",
+    "InternalOrderResolver",
+    "MT5DealCollector",
+    "MT5FillIngestionService",
+    "MT5DealsAPI",
+    "load_mt5",
+]
