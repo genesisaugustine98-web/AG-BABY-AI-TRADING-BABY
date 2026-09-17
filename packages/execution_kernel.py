@@ -3,7 +3,7 @@
 The kernel is the narrow bridge between an approved TradeIntent and a broker adapter.
 It creates durable intent state before touching the broker, submits at most once for a
 given client-order identity, treats submission ambiguity as UNKNOWN, and never creates
-a fill from an acknowledgement.
+a fill from an acknowledgement. Live execution is intentionally unreachable.
 """
 from __future__ import annotations
 
@@ -43,9 +43,12 @@ class ExecutionAttempt:
 
 
 class ExecutionKernel:
-    def __init__(self, *, policy: AdmissionPolicy | None = None, risk_engine: DeterministicRiskEngine | None = None) -> None:
+    def __init__(self, *, policy: AdmissionPolicy | None = None, risk_engine: DeterministicRiskEngine | None = None, environment: str = "demo") -> None:
         self.policy = policy or AdmissionPolicy()
         self.risk_engine = risk_engine or DeterministicRiskEngine()
+        self.environment = environment.strip().lower()
+        if self.environment not in {"demo", "paper"}:
+            raise ValueError("kernel execution environment must be demo or paper")
 
     def execute(
         self,
