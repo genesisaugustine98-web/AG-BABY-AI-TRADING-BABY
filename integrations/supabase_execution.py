@@ -8,21 +8,28 @@ replayed from persisted fills and upserted by (environment, instrument).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import urllib.error
 import urllib.parse
 import urllib.request
-import hashlib
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Mapping
 
+from apps.execution_gateway.mt5_fills import DealHistoryCursor
 from packages.fill_accounting import BrokerConfirmedFill, FillAccountingEngine, PositionState
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _required(value: str, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} must be non-empty")
+    return value.strip()
 
 
 class SupabaseExecutionStore:
@@ -94,6 +101,7 @@ class SupabaseExecutionStore:
         return fill.fill_id, True
 
     def load_fills(self, instrument: str) -> tuple[BrokerConfirmedFill, ...]:
+        instrument = _required(instrument, "instrument")
         rows = self._request(
             "GET",
             "execution_fills",
@@ -127,6 +135,59 @@ class SupabaseExecutionStore:
                 )
             )
         return tuple(fills)
+
+    def load_ingestion_checkpoint(self, *, environment: str, source: str, stream: str) -> DealHistoryCursor:
+        environment = _required(environment, "environment")
+        source = _required(source, "source")
+        stream = _required(stream, "stream")
+        rows = self._request(
+            "GET",
+            "execution_ingestion_checkpoints",
+            query={
+                "environment": f"eq.{environment}",
+                "source": f"eq.{source}",
+                "stream": f"eq.{stream}",
+                "select": "watermark_msc,overlap_msc",
+            },
+        ) or []
+        if not rows:
+            return DealHistoryCursor()
+        if len(rows) != 1:
+            raise RuntimeError(f"ingestion_checkpoint_identity_ambiguous:{environment}:{source}:{stream}")
+        row = rows[0]
+        return DealHistoryCursor(
+            watermark_msc=int(row["watermark_msc"]),
+            overlap_msc=int(row["overlap_msc"]),
+        )
+
+    def save_ingestion_checkpoint(
+        self,
+        *,
+        environment: str,
+        source: str,
+        stream: str,
+        cursor: DealHistoryCursor,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        environment = _required(environment, "environment")
+        source = _required(source, "source")
+        stream = _required(stream, "stream")
+        payload = {
+            "environment": environment,
+            "source": source,
+            "stream": stream,
+            "watermark_msc": cursor.watermark_msc,
+            "overlap_msc": cursor.overlap_msc,
+            "metadata": dict(metadata or {}),
+            "updated_at": _utc_now(),
+        }
+        self._request(
+            "POST",
+            "execution_ingestion_checkpoints",
+            query={"on_conflict": "environment,source,stream"},
+            payload=payload,
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
 
     def upsert_position(self, *, environment: str, state: PositionState) -> None:
         position_id = "pos-" + hashlib.sha256(f"{environment}:{state.instrument}".encode("utf-8")).hexdigest()[:24]
