@@ -13,6 +13,49 @@ from decimal import Decimal
 from typing import Any
 
 
+# External brokers and durable stores often expose different names for the same
+# semantic lifecycle. Reconciliation must compare meaning, not vendor vocabulary.
+_ORDER_STATE_ALIASES = {
+    "CREATED": "CREATED",
+    "VALIDATED": "VALIDATED",
+    "AUTHORIZED": "AUTHORIZED",
+    "SUBMITTING": "SUBMITTING",
+    "SUBMITTED": "SUBMITTING",
+    "TRADE_ORDER_STATE_STARTED": "SUBMITTING",
+    "ACCEPTED": "ACCEPTED",
+    "ACKNOWLEDGED": "ACCEPTED",
+    "PLACED": "ACCEPTED",
+    "TRADE_ORDER_STATE_PLACED": "ACCEPTED",
+    "REQUEST_ADD": "ACCEPTED",
+    "REQUEST_MODIFY": "ACCEPTED",
+    "REQUEST_CANCEL": "ACCEPTED",
+    "TRADE_ORDER_STATE_REQUEST_ADD": "ACCEPTED",
+    "TRADE_ORDER_STATE_REQUEST_MODIFY": "ACCEPTED",
+    "TRADE_ORDER_STATE_REQUEST_CANCEL": "ACCEPTED",
+    "PARTIAL": "PARTIAL",
+    "PARTIALLY_FILLED": "PARTIAL",
+    "TRADE_ORDER_STATE_PARTIAL": "PARTIAL",
+    "FILLED": "FILLED",
+    "TRADE_ORDER_STATE_FILLED": "FILLED",
+    "REJECTED": "REJECTED",
+    "TRADE_ORDER_STATE_REJECTED": "REJECTED",
+    "CANCELED": "CANCELED",
+    "CANCELLED": "CANCELED",
+    "TRADE_ORDER_STATE_CANCELED": "CANCELED",
+    "EXPIRED": "CANCELED",
+    "TRADE_ORDER_STATE_EXPIRED": "CANCELED",
+    "UNKNOWN": "UNKNOWN",
+    "RECONCILING": "RECONCILING",
+    "FREEZE": "FREEZE",
+}
+
+
+def canonical_order_state(value: str) -> str:
+    """Normalize internal, database, and broker state vocabulary for comparison."""
+    key = str(value or "").strip().upper()
+    return _ORDER_STATE_ALIASES.get(key, key)
+
+
 @dataclass(frozen=True)
 class LedgerEvent:
     event_id: str
@@ -115,7 +158,7 @@ def reconcile_order(internal: InternalOrderTruth, broker: BrokerOrderTruth) -> R
         reasons.append("client_order_id_mismatch")
     if internal.instrument != broker.instrument:
         reasons.append("instrument_mismatch")
-    if internal.state != broker.state:
+    if canonical_order_state(internal.state) != canonical_order_state(broker.state):
         reasons.append("state_mismatch")
     if internal.filled_quantity != broker.filled_quantity:
         reasons.append("filled_quantity_mismatch")

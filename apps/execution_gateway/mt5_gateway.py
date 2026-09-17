@@ -1,4 +1,4 @@
-"""Optional MT5 adapter. Secrets are read from environment; demo proof is fail-closed."""
+"""MT5 demo adapter. Secrets are environment-only and execution is fail-closed."""
 from __future__ import annotations
 
 import os
@@ -52,22 +52,29 @@ class DemoOnlyMT5Gateway:
 
     @staticmethod
     def _state_name(mt5: Any, value: Any) -> str:
-        names = (
-            "TRADE_ORDER_STATE_STARTED",
-            "TRADE_ORDER_STATE_PLACED",
-            "TRADE_ORDER_STATE_CANCELED",
-            "TRADE_ORDER_STATE_PARTIAL",
-            "TRADE_ORDER_STATE_FILLED",
-            "TRADE_ORDER_STATE_REJECTED",
-            "TRADE_ORDER_STATE_EXPIRED",
-            "TRADE_ORDER_STATE_REQUEST_ADD",
-            "TRADE_ORDER_STATE_REQUEST_MODIFY",
-            "TRADE_ORDER_STATE_REQUEST_CANCEL",
-        )
-        for name in names:
-            if getattr(mt5, name, object()) == value:
-                return name
-        return str(value)
+        """Map MT5 state constants into the repository's canonical lifecycle vocabulary."""
+        mapping = {
+            getattr(mt5, "TRADE_ORDER_STATE_STARTED", object()): "SUBMITTING",
+            getattr(mt5, "TRADE_ORDER_STATE_PLACED", object()): "ACCEPTED",
+            getattr(mt5, "TRADE_ORDER_STATE_CANCELED", object()): "CANCELED",
+            getattr(mt5, "TRADE_ORDER_STATE_PARTIAL", object()): "PARTIAL",
+            getattr(mt5, "TRADE_ORDER_STATE_FILLED", object()): "FILLED",
+            getattr(mt5, "TRADE_ORDER_STATE_REJECTED", object()): "REJECTED",
+            getattr(mt5, "TRADE_ORDER_STATE_EXPIRED", object()): "CANCELED",
+            getattr(mt5, "TRADE_ORDER_STATE_REQUEST_ADD", object()): "ACCEPTED",
+            getattr(mt5, "TRADE_ORDER_STATE_REQUEST_MODIFY", object()): "ACCEPTED",
+            getattr(mt5, "TRADE_ORDER_STATE_REQUEST_CANCEL", object()): "ACCEPTED",
+        }
+        state = mapping.get(value)
+        return state if state is not None else str(value)
+
+    @staticmethod
+    def _client_order_id(comment: str) -> str:
+        """Accept current AGDEMO ids and legacy AG ids, but never invent identity."""
+        comment = comment.strip()
+        if comment.startswith("AGDEMO-") or comment.startswith("AG-"):
+            return comment
+        return ""
 
     def snapshot(self) -> BrokerSnapshot:
         """Return normalized point-in-time broker truth; never synthesizes fills."""
@@ -85,7 +92,7 @@ class DemoOnlyMT5Gateway:
             comment = str(getattr(order, "comment", "") or "")
             # An absent client id is intentionally preserved as empty; reconciliation
             # will treat it as drift rather than guessing an identity.
-            client_order_id = comment if comment.startswith("AG-") else ""
+            client_order_id = self._client_order_id(comment)
             initial = Decimal(str(getattr(order, "volume_initial", 0)))
             current = Decimal(str(getattr(order, "volume_current", 0)))
             filled = max(Decimal("0"), initial - current)
@@ -115,11 +122,15 @@ class DemoOnlyMT5Gateway:
         )
         return BrokerSnapshot(tuple(orders), positions, captured_at)
 
-    def confirmed_deals(self, date_from: Any, date_to: Any, *, group: str | None = None) -> tuple[BrokerDealRecord, ...]:
-        """Return actual broker execution deals through the same connected MT5 session."""
+    def deal_collector(self) -> MT5DealCollector:
+        """Return a collector bound to the already-verified demo MT5 session."""
         if not self.connected:
             raise RuntimeError("MT5 gateway is not connected")
-        return MT5DealCollector(self._import()).collect(date_from, date_to, group=group)
+        return MT5DealCollector(self._import())
+
+    def confirmed_deals(self, date_from: Any, date_to: Any, *, group: str | None = None) -> tuple[BrokerDealRecord, ...]:
+        """Return actual broker execution deals through the same connected MT5 session."""
+        return self.deal_collector().collect(date_from, date_to, group=group)
 
     def shutdown(self):
         if self.connected:
