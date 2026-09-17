@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { authConfigured, cockpitCookie, digestAccessToken } from "@/lib/auth";
+import { authConfigured, cockpitCookie, digestAccessToken, verifyAccessToken } from "../../../lib/auth";
 
 export const runtime = "nodejs";
 
@@ -12,11 +12,11 @@ export async function POST(request: Request) {
   const form = await request.formData();
   const token = String(form.get("token") || "");
   const expected = process.env.COCKPIT_ACCESS_TOKEN || "";
-  const response = token && token === expected
-    ? NextResponse.redirect(new URL("/", request.url), { status: 303 })
-    : NextResponse.redirect(new URL("/login?error=1", request.url), { status: 303 });
+  const authorized = Boolean(token) && verifyAccessToken(expected, token);
+  const response = NextResponse.redirect(new URL(authorized ? "/" : "/login?error=1", request.url), { status: 303 });
+  response.headers.set("Cache-Control", "no-store");
 
-  if (token && token === expected) {
+  if (authorized) {
     const jar = await cookies();
     jar.set(cockpitCookie, digestAccessToken(token), {
       httpOnly: true,
@@ -26,6 +26,5 @@ export async function POST(request: Request) {
       maxAge: 60 * 60 * 8,
     });
   }
-  response.headers.set("Cache-Control", "no-store");
   return response;
 }
