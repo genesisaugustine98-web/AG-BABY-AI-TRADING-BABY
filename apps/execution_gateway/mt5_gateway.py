@@ -50,6 +50,33 @@ class DemoOnlyMT5Gateway:
         self.connected = True
         return {"login": acct.login, "server": acct.server, "trade_allowed": acct.trade_allowed}
 
+    def account_snapshot(self) -> dict[str, Any]:
+        """Return current account truth without exposing credentials."""
+        if not self.connected:
+            raise RuntimeError("MT5 gateway is not connected")
+        mt5 = self._import()
+        acct = mt5.account_info()
+        if acct is None:
+            raise RuntimeError(f"account_info failed:{mt5.last_error()}")
+        fields = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "broker": "mt5",
+            "login": getattr(acct, "login", None),
+            "server": getattr(acct, "server", None),
+            "currency": getattr(acct, "currency", None),
+            "balance": Decimal(str(getattr(acct, "balance", 0))),
+            "equity": Decimal(str(getattr(acct, "equity", 0))),
+            "margin": Decimal(str(getattr(acct, "margin", 0))),
+            "margin_free": Decimal(str(getattr(acct, "margin_free", 0))),
+            "margin_level": Decimal(str(getattr(acct, "margin_level", 0))) if getattr(acct, "margin_level", None) is not None else None,
+            "trade_allowed": bool(getattr(acct, "trade_allowed", False)),
+            "trade_mode": str(getattr(acct, "trade_mode", "")),
+            "leverage": getattr(acct, "leverage", None),
+            "company": getattr(acct, "company", None),
+            "name": getattr(acct, "name", None),
+        }
+        return fields
+
     @staticmethod
     def _state_name(mt5: Any, value: Any) -> str:
         """Map MT5 state constants into the repository's canonical lifecycle vocabulary."""
@@ -90,8 +117,6 @@ class DemoOnlyMT5Gateway:
         for order in raw_orders:
             ticket = str(getattr(order, "ticket", ""))
             comment = str(getattr(order, "comment", "") or "")
-            # An absent client id is intentionally preserved as empty; reconciliation
-            # will treat it as drift rather than guessing an identity.
             client_order_id = self._client_order_id(comment)
             initial = Decimal(str(getattr(order, "volume_initial", 0)))
             current = Decimal(str(getattr(order, "volume_current", 0)))
@@ -116,10 +141,7 @@ class DemoOnlyMT5Gateway:
             volume = Decimal(str(getattr(position, "volume", 0)))
             direction = Decimal("1") if getattr(position, "type", None) == buy_type else Decimal("-1")
             by_instrument[instrument] = by_instrument.get(instrument, Decimal("0")) + direction * volume
-        positions = tuple(
-            BrokerPositionTruth(instrument, quantity)
-            for instrument, quantity in sorted(by_instrument.items())
-        )
+        positions = tuple(BrokerPositionTruth(instrument, quantity) for instrument, quantity in sorted(by_instrument.items()))
         return BrokerSnapshot(tuple(orders), positions, captured_at)
 
     def deal_collector(self) -> MT5DealCollector:
