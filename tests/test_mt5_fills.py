@@ -1,0 +1,117 @@
+import os
+from types import SimpleNamespace
+
+import pytest
+
+from apps.execution_gateway.mt5_fills import MT5DealCollector
+
+
+class FakeMT5:
+    DEAL_TYPE_BUY = 0
+    DEAL_TYPE_SELL = 1
+
+    def __init__(self, deals=None, error=None):
+        self.deals = deals
+        self.error = error
+        self.calls = []
+
+    def history_deals_get(self, date_from, date_to, **kwargs):
+        self.calls.append((date_from, date_to, kwargs))
+        if self.error:
+            return None
+        return self.deals
+
+    def last_error(self):
+        return self.error or (0, "ok")
+
+
+def deal(**overrides):
+    values = {
+        "ticket": 101,
+        "order": 202,
+        "time": 1789628400,
+        "time_msc": 1789628400123,
+        "type": 0,
+        "entry": 0,
+        "position_id": 303,
+        "volume": 1.25,
+        "price": 150.125,
+        "commission": -0.10,
+        "swap": -0.02,
+        "profit": 0.0,
+        "fee": 0.0,
+        "reason": 3,
+        "magic": 777,
+        "symbol": "USDJPY",
+        "comment": "AG-CLIENT-1",
+        "external_id": "ext-1",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_trade_deal_becomes_normalized_broker_record(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    mt5 = FakeMT5([deal()])
+    collector = MT5DealCollector(mt5)
+    records = collector.collect("from", "to", group="*USDJPY*")
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.broker_fill_id == "101"
+    assert record.broker_order_id == "202"
+    assert record.instrument == "USDJPY"
+    assert record.side == "BUY"
+    assert str(record.quantity) == "1.25"
+    assert str(record.price) == "150.125"
+    assert record.commission == -0.10
+    assert record.financing == -0.02
+    assert record.metadata["entry"] == "IN"
+    assert record.metadata["position_id"] == "303"
+    assert mt5.calls == [("from", "to", {"group": "*USDJPY*"})]
+
+
+def test_non_trade_deals_are_excluded(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    mt5 = FakeMT5([deal(type=2), deal(ticket=102, order=203, type=1)])
+    records = MT5DealCollector(mt5).collect("from", "to")
+    assert len(records) == 1
+    assert records[0].side == "SELL"
+
+
+def test_deal_entry_variants_are_preserved(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    mt5 = FakeMT5([
+        deal(ticket=101, entry=0),
+        deal(ticket=102, order=203, entry=1),
+        deal(ticket=103, order=204, entry=2),
+        deal(ticket=104, order=205, entry=3),
+    ])
+    records = MT5DealCollector(mt5).collect("from", "to")
+    assert [record.metadata["entry"] for record in records] == ["IN", "OUT", "INOUT", "OUT_BY"]
+
+
+def test_time_msc_is_used_for_execution_timestamp(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    mt5 = FakeMT5([deal(time=1, time_msc=2000)])
+    record = MT5DealCollector(mt5).collect("from", "to")[0]
+    assert record.filled_at == "1970-01-01T00:00:02+00:00"
+
+
+def test_invalid_trade_identity_is_rejected(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    for overrides in ({"ticket": 0}, {"order": 0}, {"symbol": ""}, {"volume": 0}, {"price": 0}):
+        with pytest.raises(ValueError):
+            MT5DealCollector(FakeMT5([deal(**overrides)])).collect("from", "to")
+
+
+def test_history_error_is_not_silently_treated_as_empty(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    with pytest.raises(RuntimeError, match="history_deals_get failed"):
+        MT5DealCollector(FakeMT5(error=(1, "history failure"))).collect("from", "to")
+
+
+def test_live_environment_is_rejected(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "live")
+    with pytest.raises(RuntimeError, match="demo-only"):
+        MT5DealCollector(FakeMT5([]))
