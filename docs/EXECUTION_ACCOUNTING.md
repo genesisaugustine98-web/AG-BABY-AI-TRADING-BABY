@@ -8,6 +8,14 @@
 4. Broker positions and broker order state remain authoritative external truth during reconciliation.
 5. A theoretical order acknowledgement is never converted into a fill.
 
+## MT5 deal boundary
+
+MT5's Python `history_deals_get(date_from, date_to, ...)` returns historical deals for a bounded interval and may also filter by order or position. MQL5 defines a deal as the execution of a trade operation, with unique deal ticket, order ticket, execution time, deal type, entry direction, volume, price, commission, swap, profit, and fee fields. The collector therefore reads `DEAL_TYPE_BUY` and `DEAL_TYPE_SELL` records only and rejects malformed trade records. Non-trading history entries are ignored rather than converted into fills. citeturn233757search0turn233757search2
+
+`apps/execution_gateway/mt5_fills.py` keeps broker deal identity separate from internal order identity. A normalized `BrokerDealRecord` can only become a canonical `BrokerConfirmedFill` after an explicit `bind_internal_order(internal_order_id)` step. This prevents a broker ticket, comment, or acknowledgement from being silently treated as an internal intent mapping.
+
+Deal entry semantics (`IN`, `OUT`, `INOUT`/reverse, and `OUT_BY`) are preserved in metadata rather than discarded. Execution timestamp prefers `time_msc` and falls back to `time`; the broker ticket remains the immutable fill identity. These fields are useful for audit and downstream position/reconciliation logic. citeturn233757search2
+
 ## Position projection
 
 `packages/fill_accounting.py` uses exact `Decimal` arithmetic. Fills are replayed by `(filled_at, fill_id)` so arrival order does not change the resulting projection. Same-direction fills update weighted average price; opposing fills close existing inventory; a larger opposing fill closes the old side and opens the reversal remainder at the new fill price.
@@ -32,6 +40,8 @@ Without an independently observed arrival quote, TCA status is `UNKNOWN_ARRIVAL_
 ## Durable Supabase adapter
 
 `integrations/supabase_execution.py` is server-only. It uses `SUPABASE_SECRET_KEY` and never belongs in browser/client code. The adapter persists the fill fingerprint in metadata, reads the canonical persisted fill set, recomputes the position, and upserts the rebuildable position projection using one deterministic `(environment, instrument)` identity.
+
+Supabase's current security model for public-schema Data API access requires explicit exposure/grants in addition to RLS for newly controlled tables; this bridge therefore remains server-side and must not expose the secret key to browser clients. citeturn624003search9turn125file0
 
 The position write is intentionally treated as a projection update rather than an atomic account transaction. If a process crashes after the fill insert and before the projection update, the fill remains durable and the projection can be deterministically rebuilt. Claiming atomic fill-plus-position semantics would require a database transaction/RPC or direct Postgres transaction boundary that is not yet implemented here.
 
