@@ -66,8 +66,6 @@ class BrokerConfirmedFill:
             raise ValueError("quantity must be > 0")
         if price <= 0:
             raise ValueError("price must be > 0")
-        if commission < 0:
-            raise ValueError("commission must be >= 0")
         object.__setattr__(self, "quantity", quantity)
         object.__setattr__(self, "price", price)
         object.__setattr__(self, "commission", commission)
