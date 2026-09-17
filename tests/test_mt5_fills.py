@@ -1,9 +1,10 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
 
-from apps.execution_gateway.mt5_fills import MT5DealCollector, MT5FillIngestionService
+from apps.execution_gateway.mt5_fills import DealHistoryCursor, MT5DealCollector, MT5FillIngestionService
 
 
 class FakeMT5:
@@ -106,6 +107,24 @@ def test_ingestion_service_leaves_unresolved_deals_out_of_canonical_sink(monkeyp
     assert len(result.unresolved) == 1
     assert result.unresolved[0].broker_order_id == "204"
     assert [fill.order_id for fill in sink.fills] == ["internal-order-1"]
+
+
+def test_cursor_replays_an_overlap_before_advancing(monkeypatch):
+    cursor = DealHistoryCursor(watermark_msc=10_000, overlap_msc=5_000)
+    start, end = cursor.window(20_000)
+    assert start == datetime.fromtimestamp(5, tz=timezone.utc)
+    assert end == datetime.fromtimestamp(20, tz=timezone.utc)
+    advanced = cursor.advance(20_000)
+    assert advanced.watermark_msc == 20_000
+    assert advanced.overlap_msc == 5_000
+
+
+def test_cursor_cannot_move_backwards():
+    cursor = DealHistoryCursor(watermark_msc=10_000, overlap_msc=5_000)
+    with pytest.raises(ValueError, match="move backwards"):
+        cursor.advance(9_999)
+    with pytest.raises(ValueError, match="now_msc"):
+        cursor.window(9_999)
 
 
 def test_non_trade_deals_are_excluded(monkeypatch):
