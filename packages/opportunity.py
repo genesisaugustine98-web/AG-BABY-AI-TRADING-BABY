@@ -27,6 +27,7 @@ class OpportunityCandidate:
     state: str
     model_id: str
     model_version: str
+    evidence_ids: tuple[str, ...]
     reason: str
 
 
@@ -72,7 +73,8 @@ def build_candidate(
         state, reason = "REJECTED", "liquidity_below_threshold"
 
     risk = base_risk if state == "ADMITTED" else Decimal("0")
-    stable = f"{instrument}|{side}|{forecast.model_id}|{forecast.version}|{forecast.generated_at_ms}|{edge}"
+    evidence_ids = tuple(sorted(set(forecast.evidence_ids)))
+    stable = f"{instrument}|{side}|{forecast.model_id}|{forecast.version}|{forecast.generated_at_ms}|{edge}|{','.join(evidence_ids)}"
     candidate_id = "opp-" + sha256(stable.encode("utf-8")).hexdigest()[:24]
     return OpportunityCandidate(
         candidate_id=candidate_id,
@@ -88,6 +90,7 @@ def build_candidate(
         state=state,
         model_id=forecast.model_id,
         model_version=forecast.version,
+        evidence_ids=evidence_ids,
         reason=reason,
     )
 
