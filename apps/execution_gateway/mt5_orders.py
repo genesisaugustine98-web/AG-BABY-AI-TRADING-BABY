@@ -2,12 +2,14 @@
 
 This adapter validates broker constraints, calls order_check before order_send, and
 returns acknowledgement only. Executed quantity enters accounting only through the
-separate MT5 deal-history ingestion path.
+separate MT5 deal-history ingestion path. UNKNOWN recovery searches a bounded history
+window and never retries submission automatically.
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from types import SimpleNamespace
 from typing import Any
@@ -79,10 +81,7 @@ class DemoOnlyMT5OrderAdapter:
         action = getattr(self.mt5, "TRADE_ACTION_DEAL")
         if order_kind in {"LIMIT", "BUY_LIMIT", "SELL_LIMIT"}:
             action = getattr(self.mt5, "TRADE_ACTION_PENDING")
-            if side == "BUY":
-                order_type = getattr(self.mt5, "ORDER_TYPE_BUY_LIMIT")
-            else:
-                order_type = getattr(self.mt5, "ORDER_TYPE_SELL_LIMIT")
+            order_type = getattr(self.mt5, "ORDER_TYPE_BUY_LIMIT" if side == "BUY" else "ORDER_TYPE_SELL_LIMIT")
         price = Decimal(str(request.limit_price)) if request.limit_price is not None else default_price
 
         stop = Decimal(str(request.stop_price)) if request.stop_price is not None else Decimal("0")
@@ -104,8 +103,17 @@ class DemoOnlyMT5OrderAdapter:
             "magic": int(os.getenv("MT5_MAGIC", "260917")),
             "comment": request.client_order_id,
             "type_time": getattr(self.mt5, "ORDER_TIME_GTC", 0),
-            "type_filling": getattr(info, "filling_mode", getattr(self.mt5, "ORDER_FILLING_FOK", 0)),
+            "type_filling": self._filling_mode(info),
         }, info
+
+    def _filling_mode(self, info: Any) -> int:
+        """Convert the symbol's filling-mode flags into an MT5 order filling enum."""
+        flags = int(getattr(info, "filling_mode", 0) or 0)
+        if flags & 1:
+            return int(getattr(self.mt5, "ORDER_FILLING_FOK", 0))
+        if flags & 2:
+            return int(getattr(self.mt5, "ORDER_FILLING_IOC", 1))
+        return int(getattr(self.mt5, "ORDER_FILLING_RETURN", 2))
 
     def submit(self, request: SubmissionRequest) -> SubmissionResult:
         payload, _ = self._request(request)
@@ -128,12 +136,7 @@ class DemoOnlyMT5OrderAdapter:
         if retcode not in accepted_codes:
             return SubmissionResult("REJECTED", reason=f"order_send_retcode:{retcode}")
         order_id = getattr(result, "order", None)
-        return SubmissionResult(
-            "ACCEPTED",
-            broker_order_id=None if order_id is None else str(order_id),
-            filled_quantity=Decimal("0"),
-            reason=f"retcode:{retcode}",
-        )
+        return SubmissionResult("ACCEPTED", broker_order_id=None if order_id is None else str(order_id), filled_quantity=Decimal("0"), reason=f"retcode:{retcode}")
 
     def lookup_by_client_order_id(self, client_order_id: str) -> SubmissionResult | None:
         client_order_id = client_order_id.strip()
@@ -149,7 +152,10 @@ class DemoOnlyMT5OrderAdapter:
             order = matches[0]
             return SubmissionResult("ACCEPTED", broker_order_id=str(getattr(order, "ticket")), reason=str(getattr(order, "state", "")))
 
-        history = self.mt5.history_orders_get()
+        lookback_hours = max(1, int(os.getenv("MT5_RECOVERY_LOOKBACK_HOURS", "72")))
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(hours=lookback_hours)
+        history = self.mt5.history_orders_get(start, now)
         if history is None:
             raise RuntimeError(f"history_orders_get failed:{self.mt5.last_error()}")
         matches = [o for o in history if str(getattr(o, "comment", "")).strip() == client_order_id]
@@ -158,8 +164,12 @@ class DemoOnlyMT5OrderAdapter:
         matches = sorted(matches, key=lambda o: (getattr(o, "time_done_msc", 0), getattr(o, "ticket", 0)), reverse=True)
         order = matches[0]
         state = str(getattr(order, "state", ""))
-        rejected = any(token in state.upper() for token in ("REJECT", "CANCEL", "EXPIRE"))
-        return SubmissionResult("REJECTED" if rejected else "ACCEPTED", broker_order_id=str(getattr(order, "ticket")), reason=state)
+        upper = state.upper()
+        if any(token in upper for token in ("REJECT", "CANCEL", "EXPIRE")):
+            outcome = "REJECTED"
+        else:
+            outcome = "ACCEPTED"
+        return SubmissionResult(outcome, broker_order_id=str(getattr(order, "ticket")), reason=state)
 
     def cancel(self, broker_order_id: str) -> SubmissionResult:
         request = {"action": getattr(self.mt5, "TRADE_ACTION_REMOVE"), "order": int(broker_order_id)}
@@ -167,11 +177,7 @@ class DemoOnlyMT5OrderAdapter:
         if result is None:
             raise RuntimeError(f"order_cancel failed:{self.mt5.last_error()}")
         retcode = int(getattr(result, "retcode", -1))
-        return SubmissionResult(
-            "ACCEPTED" if retcode == getattr(self.mt5, "TRADE_RETCODE_DONE", -999999) else "REJECTED",
-            broker_order_id=broker_order_id,
-            reason=f"retcode:{retcode}",
-        )
+        return SubmissionResult("ACCEPTED" if retcode == getattr(self.mt5, "TRADE_RETCODE_DONE", -999999) else "REJECTED", broker_order_id=broker_order_id, reason=f"retcode:{retcode}")
 
 
 __all__ = ["DemoOnlyMT5OrderAdapter", "MT5OrderReceipt"]
