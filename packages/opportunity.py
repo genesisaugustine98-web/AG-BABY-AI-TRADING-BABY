@@ -42,6 +42,7 @@ def build_candidate(
     min_calibration: Decimal = Decimal("0.65"),
     min_edge: Decimal = Decimal("0.0001"),
     base_risk: Decimal = Decimal("0.005"),
+    evidence_ids: tuple[str, ...] = (),
 ) -> OpportunityCandidate:
     instrument = instrument.strip().upper()
     if not instrument:
@@ -73,8 +74,8 @@ def build_candidate(
         state, reason = "REJECTED", "liquidity_below_threshold"
 
     risk = base_risk if state == "ADMITTED" else Decimal("0")
-    evidence_ids = tuple(sorted(set(forecast.evidence_ids)))
-    stable = f"{instrument}|{side}|{forecast.model_id}|{forecast.version}|{forecast.generated_at_ms}|{edge}|{','.join(evidence_ids)}"
+    normalized_evidence = tuple(sorted(set(evidence_ids)))
+    stable = f"{instrument}|{side}|{forecast.model_id}|{forecast.version}|{forecast.generated_at_ms}|{edge}|{','.join(normalized_evidence)}"
     candidate_id = "opp-" + sha256(stable.encode("utf-8")).hexdigest()[:24]
     return OpportunityCandidate(
         candidate_id=candidate_id,
@@ -90,7 +91,7 @@ def build_candidate(
         state=state,
         model_id=forecast.model_id,
         model_version=forecast.version,
-        evidence_ids=evidence_ids,
+        evidence_ids=normalized_evidence,
         reason=reason,
     )
 
