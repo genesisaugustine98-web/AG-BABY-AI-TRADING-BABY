@@ -303,7 +303,7 @@ class TSMOMForecastModel:
                 if len(eligible) >= self.lookback_bars + 1:
                     break
         eligible.reverse()
-        if not eligible or eligible[-1].event_time_ms != decision_time_ms:
+        if not eligible or eligible[-1].usable_at_ms != decision_time_ms:
             raise ValueError("decision bar is not point-in-time usable")
         return self._forecast_from_eligible_rows(eligible)
 
