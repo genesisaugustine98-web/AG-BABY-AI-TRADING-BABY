@@ -135,7 +135,10 @@ class TSMOMForecastModel:
         closes = [x.close for x in bars]
         one_bar = _returns(closes)
         first = max(start, lookback)
-        last = min(end, len(bars) - horizon - 1)
+        # Keep the forward target strictly inside the same chronological split.
+        # Otherwise a development/validation sample near the boundary can consume
+        # a label from the next split, creating target leakage.
+        last = min(end - horizon - 1, len(bars) - horizon - 1)
         for i in range(first, last + 1):
             momentum = closes[i] / closes[i - lookback] - D1
             signal = 1 if momentum > 0 else -1 if momentum < 0 else 0
