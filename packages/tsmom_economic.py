@@ -210,4 +210,4 @@ def chronological_split_indices(
     }
 
 
-__all__ = ["EconomicResult", "chronological_split_indices", "evaluate_split"]
+__all__ = ["EconomicResult", "chronological_split_indices", "evaluate_split", "evaluate_split_sensitivity"]
