@@ -85,11 +85,11 @@ def _summarize(
             split, 0, skipped_no_signal, missing_entry_quote, missing_exit_quote,
             None, None, max_quote_gap_ms, slippage_one_way_bps,
             commission_one_way_bps, financing_bps_per_day,
-            None, None, None, None, None, None, None, None, None
+            None, None, None, None, None, None, None, None, None, None, None
         )
 
-    gross = [row[1] for row in rows]
-    net = [row[2] for row in rows]
+    gross = [row[2] for row in rows]
+    net = [row[3] for row in rows]
     entry_spreads = [row[4] for row in rows]
     exit_spreads = [row[5] for row in rows]
     mean_gross = sum(gross, D0) / Decimal(len(gross))
