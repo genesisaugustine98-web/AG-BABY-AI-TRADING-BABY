@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -123,3 +124,13 @@ def test_tsmom_training_targets_do_not_cross_split_boundary():
     )
     assert samples
     assert max(index + 6 for _, _, index, _ in samples) < 120
+
+
+
+def test_tsmom_prediction_at_index_uses_bar_availability_time():
+    base = bars(180)
+    rows = [replace(row, usable_at_ms=row.event_time_ms + 3_600_000) for row in base]
+    model = TSMOMForecastModel(lookback_bars=12, horizon_bars=3, min_training_samples=30)
+    model.fit(rows, dataset_fingerprint="dataset-1", code_commit_sha="abc123")
+    forecast = model.predict_at_index(rows, decision_index=120)
+    assert forecast.generated_at_ms == rows[120].usable_at_ms
