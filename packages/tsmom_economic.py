@@ -91,26 +91,15 @@ def _summarize(
     )
 
 
-def evaluate_split(
+def _collect_split_trades(
     model: TSMOMForecastModel,
-    bars: Iterable[PriceBar],
+    rows: list[PriceBar],
     *,
-    split: str,
     start_index: int,
     end_index: int,
-    one_way_cost_bps: Decimal,
-    delay_bars: int = 0,
-) -> EconomicResult:
-    """Evaluate a frozen model inside one chronological split only."""
-    rows = sorted(list(bars), key=lambda x: (x.event_time_ms, x.usable_at_ms, x.observation_id))
-    if start_index < 0 or end_index <= start_index or end_index > len(rows):
-        raise ValueError("invalid split bounds")
-    if one_way_cost_bps < D0:
-        raise ValueError("one_way_cost_bps cannot be negative")
-    if delay_bars < 0:
-        raise ValueError("delay_bars cannot be negative")
-
-    round_trip_cost = Decimal("2") * one_way_cost_bps / Decimal("10000")
+    delay_bars: int,
+) -> tuple[list[tuple[int, Decimal, Decimal]], int]:
+    """Replay a split once and return gross directional returns plus skipped no-trades."""
     trades: list[tuple[int, Decimal, Decimal]] = []
     skipped_no_signal = 0
     first = max(start_index, model.lookback_bars)
@@ -125,21 +114,78 @@ def evaluate_split(
         if momentum == D0:
             skipped_no_signal += 1
             continue
-        forecast = model.predict(rows, decision_time_ms=decision.event_time_ms)
+        forecast = model.predict_at_index(rows, decision_index=i)
         entry = rows[i + delay_bars]
         exit_bar = rows[i + delay_bars + model.horizon_bars]
         signal = D1 if forecast.expected_return > D0 else -D1
         realized = signal * (exit_bar.close / entry.close - D1)
-        net = realized - round_trip_cost
-        trades.append((decision.event_time_ms, realized, net))
-    return _summarize(
-        split=split,
-        rows=trades,
-        skipped_no_signal=skipped_no_signal,
-        cost_bps=one_way_cost_bps,
-        delay_bars=delay_bars,
-        horizon_bars=model.horizon_bars,
+        trades.append((decision.event_time_ms, realized, D0))
+    return trades, skipped_no_signal
+
+
+def _apply_cost(
+    rows: list[tuple[int, Decimal, Decimal]],
+    one_way_cost_bps: Decimal,
+) -> list[tuple[int, Decimal, Decimal]]:
+    round_trip_cost = Decimal("2") * one_way_cost_bps / Decimal("10000")
+    return [(timestamp, gross, gross - round_trip_cost) for timestamp, gross, _ in rows]
+
+
+def evaluate_split_sensitivity(
+    model: TSMOMForecastModel,
+    bars: Iterable[PriceBar],
+    *,
+    split: str,
+    start_index: int,
+    end_index: int,
+    one_way_costs_bps: Sequence[Decimal],
+    delay_bars: int = 0,
+) -> dict[Decimal, EconomicResult]:
+    """Replay one chronological split once and summarize multiple cost scenarios."""
+    rows = sorted(list(bars), key=lambda x: (x.event_time_ms, x.usable_at_ms, x.observation_id))
+    if start_index < 0 or end_index <= start_index or end_index > len(rows):
+        raise ValueError("invalid split bounds")
+    if delay_bars < 0:
+        raise ValueError("delay_bars cannot be negative")
+    costs = tuple(one_way_costs_bps)
+    if any(cost < D0 for cost in costs):
+        raise ValueError("one_way_cost_bps cannot be negative")
+    trades, skipped_no_signal = _collect_split_trades(
+        model, rows, start_index=start_index, end_index=end_index, delay_bars=delay_bars
     )
+    return {
+        cost: _summarize(
+            split=split,
+            rows=_apply_cost(trades, cost),
+            skipped_no_signal=skipped_no_signal,
+            cost_bps=cost,
+            delay_bars=delay_bars,
+            horizon_bars=model.horizon_bars,
+        )
+        for cost in costs
+    }
+
+
+def evaluate_split(
+    model: TSMOMForecastModel,
+    bars: Iterable[PriceBar],
+    *,
+    split: str,
+    start_index: int,
+    end_index: int,
+    one_way_cost_bps: Decimal,
+    delay_bars: int = 0,
+) -> EconomicResult:
+    """Evaluate a frozen model inside one chronological split only."""
+    return evaluate_split_sensitivity(
+        model,
+        bars,
+        split=split,
+        start_index=start_index,
+        end_index=end_index,
+        one_way_costs_bps=(one_way_cost_bps,),
+        delay_bars=delay_bars,
+    )[one_way_cost_bps]
 
 
 def chronological_split_indices(
