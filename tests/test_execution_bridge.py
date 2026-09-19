@@ -75,8 +75,6 @@ def registered(*, status="validated", calibration=Decimal("0.80"), execution_gra
 def test_bridge_denies_unvalidated_model():
     result = GovernedExecutionBridge().build_intent(
         strategy_id="strategy-a",
-        strategy_id="strategy-a",
-        strategy_id="strategy-a",
         candidate=make_candidate(),
         forecast=make_forecast(),
         registered_model=registered(status="candidate"),
@@ -116,6 +114,7 @@ def test_bridge_requires_provenance():
 
 def test_bridge_builds_intent_from_admitted_candidate():
     result = GovernedExecutionBridge().build_intent(
+        strategy_id="strategy-a",
         candidate=make_candidate(),
         forecast=make_forecast(),
         registered_model=registered(),
@@ -130,7 +129,7 @@ def test_bridge_builds_intent_from_admitted_candidate():
     )
     assert result.approved
     assert result.intent is not None
-    assert result.intent.strategy_id == "model-a"
+    assert result.intent.strategy_id == "strategy-a"
     assert result.intent.evidence_ids == frozenset({"e1", "e2"})
 
 
