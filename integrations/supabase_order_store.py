@@ -69,7 +69,7 @@ class SupabaseOrderStore(InternalOrderResolver):
         if prefer:
             headers["Prefer"] = prefer
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=self.timeout_seconds) as response:
+            with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=self.timeout_seconds, context=ssl.create_default_context(cafile=certifi.where())) as response:
                 raw = response.read().decode("utf-8")
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as exc:
@@ -85,6 +85,7 @@ class SupabaseOrderStore(InternalOrderResolver):
             "execution_orders",
             query={
                 "environment": f"eq.{self.environment}",
+                "is_test_fixture": "eq.false",
                 "client_order_id": f"eq.{client_order_id}",
                 "select": "order_id,environment,intent_id,client_order_id,instrument,side,requested_quantity,order_type,limit_price,state,broker_order_id",
             },
@@ -207,6 +208,7 @@ class SupabaseOrderStore(InternalOrderResolver):
             "execution_orders",
             query={
                 "environment": f"eq.{self.environment}",
+                "is_test_fixture": "eq.false",
                 "broker_order_id": f"eq.{broker_order_id}",
                 "instrument": f"eq.{instrument}",
                 "side": f"eq.{side}",
