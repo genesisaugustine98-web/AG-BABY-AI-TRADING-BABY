@@ -11,7 +11,6 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
-from types import SimpleNamespace
 from typing import Any
 
 from packages.demo_execution import SubmissionRequest, SubmissionResult
@@ -66,6 +65,11 @@ class DemoOnlyMT5OrderAdapter:
         tick = self.mt5.symbol_info_tick(request.symbol)
         if tick is None:
             raise RuntimeError(f"symbol_tick unavailable:{request.symbol}")
+        bid = Decimal(str(getattr(tick, "bid", "0")))
+        ask = Decimal(str(getattr(tick, "ask", "0")))
+        tick_time = int(getattr(tick, "time", 0) or 0)
+        if bid <= 0 or ask <= 0 or tick_time <= 0:
+            raise RuntimeError(f"invalid_or_stale_symbol_tick:{request.symbol}")
 
         side = request.side.upper()
         if side == "BUY":
@@ -117,14 +121,14 @@ class DemoOnlyMT5OrderAdapter:
 
     def submit(self, request: SubmissionRequest) -> SubmissionResult:
         payload, _ = self._request(request)
-        check = self.mt5.order_check(SimpleNamespace(**payload))
+        check = self.mt5.order_check(payload)
         if check is None:
             raise RuntimeError(f"order_check failed:{self.mt5.last_error()}")
         check_retcode = int(getattr(check, "retcode", 0))
         done_code = getattr(self.mt5, "TRADE_RETCODE_DONE", -1)
         if check_retcode not in {0, done_code}:
             return SubmissionResult("REJECTED", reason=f"order_check_retcode:{check_retcode}")
-        result = self.mt5.order_send(SimpleNamespace(**payload))
+        result = self.mt5.order_send(payload)
         if result is None:
             raise RuntimeError(f"order_send failed:{self.mt5.last_error()}")
         retcode = int(getattr(result, "retcode", -1))
@@ -173,7 +177,7 @@ class DemoOnlyMT5OrderAdapter:
 
     def cancel(self, broker_order_id: str) -> SubmissionResult:
         request = {"action": getattr(self.mt5, "TRADE_ACTION_REMOVE"), "order": int(broker_order_id)}
-        result = self.mt5.order_send(SimpleNamespace(**request))
+        result = self.mt5.order_send(request)
         if result is None:
             raise RuntimeError(f"order_cancel failed:{self.mt5.last_error()}")
         retcode = int(getattr(result, "retcode", -1))
