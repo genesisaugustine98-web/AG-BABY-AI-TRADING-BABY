@@ -84,10 +84,30 @@ def _summarize(
 ) -> ExecutionEconomicResult:
     if not rows:
         return ExecutionEconomicResult(
-            split, 0, skipped_no_signal, missing_entry_quote, missing_exit_quote,
-            None, None, max_quote_gap_ms, slippage_one_way_bps,
-            commission_one_way_bps, financing_bps_per_day,
-            None, None, None, None, None, None, None, None, None, None, None, None
+            split=split,
+            n=0,
+            skipped_no_signal=skipped_no_signal,
+            missing_entry_quote=missing_entry_quote,
+            missing_exit_quote=missing_exit_quote,
+            sample_start=None,
+            sample_end=None,
+            max_quote_gap_ms=max_quote_gap_ms,
+            slippage_one_way_bps=slippage_one_way_bps,
+            commission_one_way_bps=commission_one_way_bps,
+            financing_bps_per_day=financing_bps_per_day,
+            mean_gross=None,
+            mean_net=None,
+            cumulative_net=None,
+            max_drawdown=None,
+            win_rate_net=None,
+            profit_factor=None,
+            sharpe_like=None,
+            mean_entry_spread_bps=None,
+            median_entry_spread_bps=None,
+            mean_exit_spread_bps=None,
+            median_exit_spread_bps=None,
+            mean_midpoint_gross=None,
+            mean_spread_drag_bps=None,
         )
 
     gross = [row[2] for row in rows]
