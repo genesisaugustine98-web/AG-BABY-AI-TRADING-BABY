@@ -21,6 +21,7 @@ D1 = Decimal("1")
 class EconomicResult:
     split: str
     n: int
+    skipped_no_signal: int
     sample_start: int | None
     sample_end: int | None
     assumed_one_way_cost_bps: Decimal
@@ -53,13 +54,14 @@ def _summarize(
     *,
     split: str,
     rows: list[tuple[int, Decimal, Decimal]],
+    skipped_no_signal: int,
     cost_bps: Decimal,
     delay_bars: int,
     horizon_bars: int,
 ) -> EconomicResult:
     if not rows:
         return EconomicResult(
-            split, 0, None, None, cost_bps, delay_bars, horizon_bars,
+            split, 0, skipped_no_signal, None, None, cost_bps, delay_bars, horizon_bars,
             None, None, None, None, None, None, None, None
         )
     gross = [row[1] for row in rows]
@@ -82,9 +84,10 @@ def _summarize(
     sharpe_like = mean_net / std * Decimal(str(sqrt(len(net)))) if std > D0 else None
     breakeven = max(D0, mean_gross * Decimal("10000") / Decimal("2"))
     return EconomicResult(
-        split, len(rows), rows[0][0], rows[-1][0], cost_bps, delay_bars, horizon_bars,
-        mean_gross, mean_net, cumulative, _max_drawdown(net),
-        Decimal(wins) / Decimal(len(net)), profit_factor, sharpe_like, breakeven
+        split, len(rows), skipped_no_signal, rows[0][0], rows[-1][0], cost_bps,
+        delay_bars, horizon_bars, mean_gross, mean_net, cumulative,
+        _max_drawdown(net), Decimal(wins) / Decimal(len(net)), profit_factor,
+        sharpe_like, breakeven,
     )
 
 
@@ -109,6 +112,7 @@ def evaluate_split(
 
     round_trip_cost = Decimal("2") * one_way_cost_bps / Decimal("10000")
     trades: list[tuple[int, Decimal, Decimal]] = []
+    skipped_no_signal = 0
     first = max(start_index, model.lookback_bars)
     last = min(
         end_index - 1 - delay_bars - model.horizon_bars,
@@ -116,11 +120,14 @@ def evaluate_split(
     )
     for i in range(first, last + 1):
         decision = rows[i]
+        lookback_price = rows[i - model.lookback_bars].close
+        momentum = decision.close / lookback_price - D1
+        if momentum == D0:
+            skipped_no_signal += 1
+            continue
         forecast = model.predict(rows, decision_time_ms=decision.event_time_ms)
         entry = rows[i + delay_bars]
         exit_bar = rows[i + delay_bars + model.horizon_bars]
-        gross = forecast.expected_return * (D1 if forecast.expected_return >= D0 else -D1)
-        # Economic replay uses the model's realized directional signal, not its forecast magnitude.
         signal = D1 if forecast.expected_return > D0 else -D1
         realized = signal * (exit_bar.close / entry.close - D1)
         net = realized - round_trip_cost
@@ -128,6 +135,7 @@ def evaluate_split(
     return _summarize(
         split=split,
         rows=trades,
+        skipped_no_signal=skipped_no_signal,
         cost_bps=one_way_cost_bps,
         delay_bars=delay_bars,
         horizon_bars=model.horizon_bars,
