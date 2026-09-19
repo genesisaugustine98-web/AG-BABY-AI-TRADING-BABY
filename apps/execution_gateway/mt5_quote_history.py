@@ -5,7 +5,7 @@ COPY_TICKS_INFO. It never submits, modifies, or cancels orders.
 """
 from __future__ import annotations
 
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -126,6 +126,27 @@ class RollingDailyQuoteCache:
                 self._cache.pop(next(iter(self._cache)))
         return self._cache[key]
 
+    def quote_at_or_before(
+        self,
+        *,
+        symbol: str,
+        event_time_ms: int,
+        max_gap_ms: int,
+    ) -> HistoricalQuote | None:
+        """Return the latest quote known at or before the execution timestamp."""
+        if event_time_ms <= 0:
+            raise ValueError("event_time_ms must be positive")
+        if max_gap_ms < 0:
+            raise ValueError("max_gap_ms must be >= 0")
+        target = datetime.fromtimestamp(event_time_ms / 1000, tz=timezone.utc)
+        day = target.date()
+        for candidate_day in (day, day - timedelta(days=1)):
+            quotes, times = self._load(symbol, candidate_day)
+            index = bisect_right(times, event_time_ms) - 1
+            if index >= 0 and event_time_ms - quotes[index].event_time_ms <= max_gap_ms:
+                return quotes[index]
+        return None
+
     def quote_at_or_after(
         self,
         *,
@@ -133,6 +154,11 @@ class RollingDailyQuoteCache:
         event_time_ms: int,
         max_gap_ms: int,
     ) -> HistoricalQuote | None:
+        """Return the first quote at or after the requested timestamp.
+
+        This method is retained for non-replay use. Trading replay should prefer
+        quote_at_or_before so the selected quote is never from the future.
+        """
         if event_time_ms <= 0:
             raise ValueError("event_time_ms must be positive")
         if max_gap_ms < 0:
