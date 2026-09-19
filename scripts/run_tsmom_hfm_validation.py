@@ -31,7 +31,7 @@ def main() -> int:
     gateway = DemoOnlyMT5Gateway()
     gateway.connect_and_verify_demo()
     try:
-        adapter = MT5MarketDataAdapter(gateway._import())
+        adapter = MT5MarketDataAdapter(gateway.mt5_api())
         interval_seconds = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}[args.timeframe.upper()]
         rows = adapter.fetch_completed_bars(
             symbol=args.symbol,
