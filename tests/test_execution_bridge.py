@@ -88,7 +88,7 @@ def test_bridge_denies_unvalidated_model():
         horizon_seconds=300,
     )
     assert not result.approved
-    assert "MODEL_NOT_VALIDATED_FOR_DEMO" in result.reasons
+    assert "MODEL_NOT_VALIDATED_FOR_EXECUTION" in result.reasons
     assert result.intent is None
 
 
@@ -149,3 +149,22 @@ def test_bridge_requires_forecast_registry_calibration_match():
         horizon_seconds=300,
     )
     assert "FORECAST_CALIBRATION_MISMATCH" in result.reasons
+
+
+def test_paper_does_not_require_execution_grade():
+    result = GovernedExecutionBridge(environment="paper").build_intent(
+        strategy_id="strategy-a",
+        candidate=make_candidate(),
+        forecast=make_forecast(),
+        registered_model=registered(execution_grade=False),
+        instrument=make_instrument(),
+        quantity=Decimal("0.01"),
+        stop_price=149,
+        target_price=151,
+        now_ms=int(datetime(2026, 9, 19, 11, 1, tzinfo=timezone.utc).timestamp() * 1000),
+        expires_at_ms=int(datetime(2026, 9, 19, 11, 2, tzinfo=timezone.utc).timestamp() * 1000),
+        max_slippage_fraction=Decimal("0.0001"),
+        horizon_seconds=300,
+    )
+    assert result.approved
+    assert result.intent is not None
