@@ -62,11 +62,12 @@ def test_tsmom_prediction_is_point_in_time():
     assert forecast.version == "1"
     assert forecast.expected_return > 0
     assert forecast.probability_up > Decimal("0.5")
-    assert forecast.generated_at_ms == rows[120].event_time_ms
+    assert forecast.generated_at_ms == rows[120].usable_at_ms
     assert "bar-121" in forecast.evidence_ids
     assert "bar-122" not in forecast.evidence_ids
     assert indexed.expected_return == forecast.expected_return
     assert indexed.probability_up == forecast.probability_up
+    assert indexed.generated_at_ms == rows[120].usable_at_ms
 
 
 def test_tsmom_requires_enough_training_data():
