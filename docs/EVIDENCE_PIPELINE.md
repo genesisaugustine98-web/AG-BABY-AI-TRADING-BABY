@@ -37,7 +37,7 @@ The repository currently contains the acquisition and analysis machinery, but no
 
 For broker-integrated research, the repository now has a separate HFM/MT5 historical-quote adapter that reads COPY_TICKS_INFO Bid/Ask-change ticks and a TSMOM replay that prices hypothetical entries and exits from the executable side of the spread: BUY entries use Ask and exits use Bid; SELL entries use Bid and exits use Ask. MetaTrader 5 documents COPY_TICKS_INFO as the tick stream for Bid/Ask changes and exposes the tick data through the Python API. citeturn891143search0turn891143search8
 
-The replay keeps historical quotes bounded in memory through a rolling daily cache. A quote must be found at or after the scheduled execution timestamp within an explicit maximum gap; otherwise the hypothetical trade is marked unpriced rather than silently using a distant quote.
+The replay keeps historical quotes bounded in memory through a rolling daily cache. A quote must be found at or before the scheduled execution timestamp within an explicit maximum staleness window; otherwise the hypothetical trade is marked unpriced rather than silently using a future or distant quote. This avoids introducing forward-looking quote bias.
 
 Slippage, commission, and financing remain explicit assumptions for hypothetical trades. Real broker deal commission/swap records cannot be transferred to an unrelated hypothetical trade. Therefore the tick-aware replay can establish spread-aware execution pricing, but its net economics remain assumption-dependent until those assumptions are independently justified.
 
