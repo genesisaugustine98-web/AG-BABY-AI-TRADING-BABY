@@ -69,6 +69,7 @@ class TSMOMValidation:
     feature_fingerprint: str
     dataset_fingerprint: str
     code_commit_sha: str
+    calibration_gate: str
     validation_status: str
 
 
@@ -228,16 +229,18 @@ class TSMOMForecastModel:
         feature_fingerprint = sha256(
             f"{self.MODEL_ID}|{self.VERSION}|lookback={self.lookback_bars}|horizon={self.horizon_bars}|bar_interval={self.bar_interval_seconds}|buckets=0.5,1.0".encode()
         ).hexdigest()
-        validation_status = "validated" if (
+        calibration_gate = "passed" if (
             len(val_samples) >= self.min_training_samples and
-            len(holdout_samples) >= self.min_training_samples and
             calibration >= Decimal("0.65")
-        ) else "candidate"
+        ) else "failed"
+        # Economic validation is deliberately separate. This fit never upgrades a
+        # model to "validated" merely because its calibration gate passed.
+        validation_status = "candidate"
         self.validation = TSMOMValidation(
             self.MODEL_ID, self.VERSION, self.lookback_bars, self.horizon_bars,
             len(dev_samples), len(val_samples), len(holdout_samples),
             ece, calibration, feature_fingerprint,
-            dataset_fingerprint, code_commit_sha, validation_status,
+            dataset_fingerprint, code_commit_sha, calibration_gate, validation_status,
         )
         return self.validation
 
