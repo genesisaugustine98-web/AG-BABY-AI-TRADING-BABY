@@ -53,6 +53,8 @@ class MT5MarketDataAdapter:
                 raise RuntimeError(f"symbol_select failed:{symbol}")
 
         tf = getattr(self.mt5, TIMEFRAME_NAMES[timeframe])
+        intervals_seconds = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}
+        interval_ms = intervals_seconds[timeframe] * 1000
         rates = self.mt5.copy_rates_from_pos(symbol, tf, 1, count)
         if rates is None:
             raise RuntimeError(f"copy_rates_from_pos failed:{symbol}:{timeframe}:{self.mt5.last_error()}")
@@ -63,12 +65,13 @@ class MT5MarketDataAdapter:
         for row in rates:
             event_time_ms = broker_server_epoch_seconds_to_utc_ms(int(row["time"]))
             close = Decimal(str(row["close"]))
+            usable_at_ms = event_time_ms + interval_ms
             observation_id = f"mt5:{symbol}:{timeframe}:{event_time_ms}"
             bars.append(
                 PriceBar(
                     symbol=symbol,
                     event_time_ms=event_time_ms,
-                    usable_at_ms=event_time_ms,
+                    usable_at_ms=usable_at_ms,
                     close=close,
                     source="hfm_mt5",
                     source_version=source_version,
