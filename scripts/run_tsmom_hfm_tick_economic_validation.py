@@ -78,7 +78,7 @@ def main() -> int:
         quote_cache = RollingDailyQuoteCache(quote_adapter, max_days=2)
 
         def provider(timestamp_ms: int):
-            return quote_cache.quote_at_or_after(
+            return quote_cache.quote_at_or_before(
                 symbol=args.symbol,
                 event_time_ms=timestamp_ms,
                 max_gap_ms=args.max_quote_gap_seconds * 1000,
@@ -155,7 +155,7 @@ def main() -> int:
                 "entry": "BUY=ask, SELL=bid",
                 "exit": "BUY=bid, SELL=ask",
                 "historical_quote_source": "MT5 COPY_TICKS_INFO",
-                "quote_selection": "first valid Bid/Ask quote at or after scheduled execution timestamp",
+                "quote_selection": "latest valid Bid/Ask quote at or before scheduled execution timestamp",
                 "max_quote_gap_seconds": args.max_quote_gap_seconds,
             },
             "cost_assumptions": {
