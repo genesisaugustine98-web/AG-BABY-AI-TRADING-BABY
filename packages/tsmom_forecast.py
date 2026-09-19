@@ -247,11 +247,7 @@ class TSMOMForecastModel:
         )
         return self.validation
 
-    def predict(self, bars: Iterable[PriceBar], *, decision_time_ms: int) -> Forecast:
-        if not self._fitted or self.validation is None or self._fallback is None:
-            raise RuntimeError("model must be fitted before predict")
-        rows = [x for x in bars if x.usable_at_ms <= decision_time_ms]
-        rows.sort(key=lambda x: (x.event_time_ms, x.usable_at_ms, x.observation_id))
+    def _forecast_from_eligible_rows(self, rows: list[PriceBar]) -> Forecast:
         if len(rows) < self.lookback_bars + 1:
             raise ValueError("insufficient point-in-time bars for prediction")
         current = rows[-1]
@@ -277,8 +273,39 @@ class TSMOMForecastModel:
             probability_up,
             self.validation.calibration_score,
             min(D1, max(D0, abs(z) / Decimal("3"))),
-            frozenset(x.observation_id for x in rows[-self.lookback_bars - 1:]),
+            frozenset(evidence_ids),
         )
+
+    def predict(self, bars: Iterable[PriceBar], *, decision_time_ms: int) -> Forecast:
+        if not self._fitted or self.validation is None or self._fallback is None:
+            raise RuntimeError("model must be fitted before predict")
+        rows = [x for x in bars if x.usable_at_ms <= decision_time_ms]
+        rows.sort(key=lambda x: (x.event_time_ms, x.usable_at_ms, x.observation_id))
+        return self._forecast_from_eligible_rows(rows)
+
+    def predict_at_index(self, bars: list[PriceBar], *, decision_index: int) -> Forecast:
+        """Predict at a chronological bar index without rescanning the full dataset.
+
+        The recent eligible history is collected backwards from the decision bar,
+        preserving the point-in-time usable_at boundary while keeping sequential
+        replay O(lookback) per decision rather than O(dataset) per decision.
+        """
+        if not self._fitted or self.validation is None or self._fallback is None:
+            raise RuntimeError("model must be fitted before predict")
+        if decision_index < 0 or decision_index >= len(bars):
+            raise ValueError("decision_index out of range")
+        decision_time_ms = bars[decision_index].event_time_ms
+        eligible: list[PriceBar] = []
+        for index in range(decision_index, -1, -1):
+            row = bars[index]
+            if row.usable_at_ms <= decision_time_ms:
+                eligible.append(row)
+                if len(eligible) >= self.lookback_bars + 1:
+                    break
+        eligible.reverse()
+        if not eligible or eligible[-1].event_time_ms != decision_time_ms:
+            raise ValueError("decision bar is not point-in-time usable")
+        return self._forecast_from_eligible_rows(eligible)
 
     @property
     def horizon_seconds(self) -> int:
