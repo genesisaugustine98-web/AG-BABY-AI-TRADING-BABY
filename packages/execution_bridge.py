@@ -34,10 +34,13 @@ class RegisteredModel:
     execution_grade: bool
     feature_version: str
 
-    def validate_for_demo(self) -> tuple[bool, tuple[str, ...]]:
+    def validate_for_execution(self, environment: str) -> tuple[bool, tuple[str, ...]]:
+        environment = environment.strip().lower()
         reasons: list[str] = []
+        if environment not in {"paper", "demo"}:
+            reasons.append("UNSUPPORTED_EXECUTION_ENVIRONMENT")
         if self.status not in {"validated", "production"}:
-            reasons.append("MODEL_NOT_VALIDATED_FOR_DEMO")
+            reasons.append("MODEL_NOT_VALIDATED_FOR_EXECUTION")
         if not self.dataset_fingerprint.strip():
             reasons.append("MODEL_DATASET_FINGERPRINT_MISSING")
         if not self.code_commit_sha.strip():
@@ -46,6 +49,8 @@ class RegisteredModel:
             reasons.append("MODEL_CALIBRATION_INVALID")
         if not self.feature_version.strip():
             reasons.append("MODEL_FEATURE_VERSION_MISSING")
+        if environment == "demo" and not self.execution_grade:
+            reasons.append("MODEL_NOT_EXECUTION_GRADE")
         return (not reasons, tuple(reasons))
 
 
@@ -98,7 +103,7 @@ class GovernedExecutionBridge:
             reasons.append("FORECAST_MODEL_ID_MISMATCH")
         if forecast.model_id != registered_model.model_id or forecast.version != registered_model.version:
             reasons.append("UNREGISTERED_FORECAST_VERSION")
-        _, model_reasons = registered_model.validate_for_demo()
+        _, model_reasons = registered_model.validate_for_execution(self.environment)
         reasons.extend(model_reasons)
         if forecast.calibration_score != registered_model.calibration_score:
             reasons.append("FORECAST_CALIBRATION_MISMATCH")
