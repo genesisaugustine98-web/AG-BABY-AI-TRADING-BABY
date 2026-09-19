@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+import certifi
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
