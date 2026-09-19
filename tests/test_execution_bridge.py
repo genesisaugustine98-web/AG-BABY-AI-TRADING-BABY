@@ -74,6 +74,9 @@ def registered(*, status="validated", calibration=Decimal("0.80"), execution_gra
 
 def test_bridge_denies_unvalidated_model():
     result = GovernedExecutionBridge().build_intent(
+        strategy_id="strategy-a",
+        strategy_id="strategy-a",
+        strategy_id="strategy-a",
         candidate=make_candidate(),
         forecast=make_forecast(),
         registered_model=registered(status="candidate"),
@@ -95,6 +98,7 @@ def test_bridge_requires_provenance():
     candidate = make_candidate()
     candidate = candidate.__class__(**{**candidate.__dict__, "evidence_ids": ()})
     result = GovernedExecutionBridge().build_intent(
+        strategy_id="strategy-a",
         candidate=candidate,
         forecast=make_forecast(),
         registered_model=registered(),
