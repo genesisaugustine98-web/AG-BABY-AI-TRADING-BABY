@@ -94,7 +94,7 @@ def main() -> int:
                 start_index=lo,
                 end_index=hi,
                 quote_provider=provider,
-                max_quote_gap_ms=args.max_quote_gap_seconds * 1000,
+                max_quote_gap_ms=args.max_quote_staleness_seconds * 1000,
                 slippage_one_way_bps=args.slippage_bps_one_way,
                 commission_one_way_bps=args.commission_bps_one_way,
                 financing_bps_per_day=args.financing_bps_per_day,
