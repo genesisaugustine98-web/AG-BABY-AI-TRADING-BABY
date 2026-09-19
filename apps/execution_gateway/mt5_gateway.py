@@ -60,6 +60,12 @@ class DemoOnlyMT5Gateway:
         self.connected = True
         return {"login": acct.login, "server": acct.server, "trade_allowed": acct.trade_allowed}
 
+    def mt5_api(self) -> Any:
+        """Return the verified MT5 API handle without exposing credentials."""
+        if not self.connected:
+            raise RuntimeError("MT5 gateway is not connected")
+        return self._import()
+
     def account_snapshot(self) -> dict[str, Any]:
         """Return current account truth without exposing credentials."""
         if not self.connected:
