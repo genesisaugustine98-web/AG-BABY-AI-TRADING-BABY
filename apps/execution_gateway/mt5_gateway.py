@@ -39,6 +39,13 @@ class DemoOnlyMT5Gateway:
             ok = mt5.initialize(**kwargs)
         if not ok:
             raise RuntimeError(f"initialize failed: {mt5.last_error()}")
+        terminal_info = mt5.terminal_info()
+        if terminal_info is None or not bool(getattr(terminal_info, "connected", False)):
+            mt5.shutdown()
+            raise RuntimeError("MT5 terminal is not connected")
+        if not bool(getattr(terminal_info, "trade_allowed", False)):
+            mt5.shutdown()
+            raise RuntimeError("MT5 terminal trading is disabled; enable Algo Trading before execution")
         acct = mt5.account_info()
         if acct is None:
             mt5.shutdown()
@@ -47,6 +54,9 @@ class DemoOnlyMT5Gateway:
         if not explicit_demo:
             mt5.shutdown()
             raise RuntimeError("could not positively prove demo account")
+        if not bool(getattr(acct, "trade_allowed", False)) or not bool(getattr(acct, "trade_expert", False)):
+            mt5.shutdown()
+            raise RuntimeError("HFM demo account or expert trading permission is disabled")
         self.connected = True
         return {"login": acct.login, "server": acct.server, "trade_allowed": acct.trade_allowed}
 
