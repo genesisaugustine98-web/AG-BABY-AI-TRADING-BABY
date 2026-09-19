@@ -274,6 +274,7 @@ class TSMOMForecastModel:
             probability_up,
             self.validation.calibration_score,
             min(D1, max(D0, abs(z) / Decimal("3"))),
+            frozenset(x.observation_id for x in rows[-self.lookback_bars - 1:]),
         )
 
     @property
