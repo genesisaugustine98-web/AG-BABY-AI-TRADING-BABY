@@ -113,14 +113,16 @@ class TSMOMForecastModel:
         lookback_bars: int = 24,
         horizon_bars: int = 6,
         min_training_samples: int = 30,
+        bar_interval_seconds: int = 3600,
     ) -> None:
-        if lookback_bars < 2 or horizon_bars < 1:
-            raise ValueError("lookback_bars and horizon_bars must be positive")
+        if lookback_bars < 2 or horizon_bars < 1 or bar_interval_seconds < 1:
+            raise ValueError("lookback_bars, horizon_bars and bar_interval_seconds must be positive")
         if min_training_samples < 10:
             raise ValueError("min_training_samples must be >= 10")
         self.lookback_bars = lookback_bars
         self.horizon_bars = horizon_bars
         self.min_training_samples = min_training_samples
+        self.bar_interval_seconds = bar_interval_seconds
         self._buckets: dict[int, _BucketStats] = {}
         self._fallback: _BucketStats | None = None
         self.validation: TSMOMValidation | None = None
@@ -224,7 +226,7 @@ class TSMOMForecastModel:
         self._fitted = True
 
         feature_fingerprint = sha256(
-            f"{self.MODEL_ID}|{self.VERSION}|lookback={self.lookback_bars}|horizon={self.horizon_bars}|buckets=0.5,1.0".encode()
+            f"{self.MODEL_ID}|{self.VERSION}|lookback={self.lookback_bars}|horizon={self.horizon_bars}|bar_interval={self.bar_interval_seconds}|buckets=0.5,1.0".encode()
         ).hexdigest()
         validation_status = "validated" if (
             len(val_samples) >= self.min_training_samples and
@@ -274,7 +276,7 @@ class TSMOMForecastModel:
     @property
     def horizon_seconds(self) -> int:
         # Callers using non-hourly bars should override this conversion at their adapter boundary.
-        return self.horizon_bars * 3600
+        return self.horizon_bars * self.bar_interval_seconds
 
 
 def dataset_fingerprint(bars: Iterable[PriceBar]) -> str:
