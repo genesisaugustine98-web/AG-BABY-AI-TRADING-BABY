@@ -5,6 +5,7 @@ COPY_TICKS_INFO. It never submits, modifies, or cancels orders.
 """
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
@@ -113,12 +114,14 @@ class RollingDailyQuoteCache:
             raise ValueError("max_days must be >= 1")
         self.adapter = adapter
         self.max_days = max_days
-        self._cache: dict[tuple[str, date], tuple[HistoricalQuote, ...]] = {}
+        self._cache: dict[tuple[str, date], tuple[tuple[HistoricalQuote, ...], tuple[int, ...]]] = {}
 
-    def _load(self, symbol: str, day: date) -> tuple[HistoricalQuote, ...]:
+    def _load(self, symbol: str, day: date) -> tuple[tuple[HistoricalQuote, ...], tuple[int, ...]]:
         key = (symbol, day)
         if key not in self._cache:
-            self._cache[key] = self.adapter.fetch_utc_day(symbol=symbol, day=day)
+            quotes = self.adapter.fetch_utc_day(symbol=symbol, day=day)
+            times = tuple(quote.event_time_ms for quote in quotes)
+            self._cache[key] = (quotes, times)
             while len(self._cache) > self.max_days:
                 self._cache.pop(next(iter(self._cache)))
         return self._cache[key]
@@ -137,13 +140,10 @@ class RollingDailyQuoteCache:
         target = datetime.fromtimestamp(event_time_ms / 1000, tz=timezone.utc)
         day = target.date()
         for candidate_day in (day, day + timedelta(days=1)):
-            quotes = self._load(symbol, candidate_day)
-            for quote in quotes:
-                if quote.event_time_ms < event_time_ms:
-                    continue
-                if quote.event_time_ms - event_time_ms <= max_gap_ms:
-                    return quote
-                break
+            quotes, times = self._load(symbol, candidate_day)
+            index = bisect_left(times, event_time_ms)
+            if index < len(quotes) and quotes[index].event_time_ms - event_time_ms <= max_gap_ms:
+                return quotes[index]
         return None
 
 
