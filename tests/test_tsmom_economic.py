@@ -1,3 +1,4 @@
+from dataclasses import replace
 from decimal import Decimal
 
 from packages.tsmom_economic import chronological_split_indices, evaluate_split
@@ -45,3 +46,19 @@ def test_economic_validation_handles_delay():
     assert result.n > 0
     assert result.horizon_bars == 3
     assert result.delay_bars == 1
+
+
+def test_economic_validation_skips_zero_momentum_without_aborting():
+    rows = bars(240)
+    model = TSMOMForecastModel(lookback_bars=12, horizon_bars=3, min_training_samples=30)
+    model.fit(rows, dataset_fingerprint="dataset-1", code_commit_sha="abc123")
+    target_index = 160
+    rows[target_index] = replace(rows[target_index], close=rows[target_index - 12].close)
+    splits = chronological_split_indices(len(rows))
+    result = evaluate_split(
+        model, rows, split="validation",
+        start_index=splits["validation"][0], end_index=splits["validation"][1],
+        one_way_cost_bps=Decimal("0"), delay_bars=1,
+    )
+    assert result.skipped_no_signal >= 1
+    assert result.n > 0
