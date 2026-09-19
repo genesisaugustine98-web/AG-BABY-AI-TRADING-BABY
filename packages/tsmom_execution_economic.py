@@ -41,6 +41,8 @@ class ExecutionEconomicResult:
     sharpe_like: Decimal | None
     mean_entry_spread_bps: Decimal | None
     median_entry_spread_bps: Decimal | None
+    mean_exit_spread_bps: Decimal | None
+    median_exit_spread_bps: Decimal | None
 
 
 def _max_drawdown(values: Sequence[Decimal]) -> Decimal | None:
@@ -69,7 +71,7 @@ def _median(values: Sequence[Decimal]) -> Decimal | None:
 def _summarize(
     *,
     split: str,
-    rows: list[tuple[int, Decimal, Decimal, Decimal]],
+    rows: list[tuple[int, int, Decimal, Decimal, Decimal, Decimal]],
     skipped_no_signal: int,
     missing_entry_quote: int,
     missing_exit_quote: int,
@@ -88,7 +90,8 @@ def _summarize(
 
     gross = [row[1] for row in rows]
     net = [row[2] for row in rows]
-    spreads = [row[3] for row in rows]
+    entry_spreads = [row[4] for row in rows]
+    exit_spreads = [row[5] for row in rows]
     mean_gross = sum(gross, D0) / Decimal(len(gross))
     mean_net = sum(net, D0) / Decimal(len(net))
     cumulative = D1
@@ -107,11 +110,12 @@ def _summarize(
     sharpe_like = mean_net / std * Decimal(str(sqrt(len(net)))) if std > D0 else None
     return ExecutionEconomicResult(
         split, len(rows), skipped_no_signal, missing_entry_quote, missing_exit_quote,
-        rows[0][0], rows[-1][0], max_quote_gap_ms, slippage_one_way_bps,
+        rows[0][0], rows[-1][1], max_quote_gap_ms, slippage_one_way_bps,
         commission_one_way_bps, financing_bps_per_day, mean_gross, mean_net,
         cumulative, _max_drawdown(net), Decimal(wins) / Decimal(len(net)),
         profit_factor, sharpe_like,
-        sum(spreads, D0) / Decimal(len(spreads)), _median(spreads)
+        sum(entry_spreads, D0) / Decimal(len(entry_spreads)), _median(entry_spreads),
+        sum(exit_spreads, D0) / Decimal(len(exit_spreads)), _median(exit_spreads)
     )
 
 
@@ -158,7 +162,7 @@ def evaluate_split_with_quotes(
     if delay_bars < 0:
         raise ValueError("delay_bars cannot be negative")
 
-    trades: list[tuple[int, Decimal, Decimal, Decimal]] = []
+    trades: list[tuple[int, int, Decimal, Decimal, Decimal, Decimal]] = []
     skipped_no_signal = 0
     missing_entry_quote = 0
     missing_exit_quote = 0
@@ -213,10 +217,9 @@ def evaluate_split_with_quotes(
         financing = holding_days * financing_bps_per_day / D10000
         commission = Decimal("2") * commission_one_way_bps / D10000
         net = gross - financing - commission
-        spread_bps = (
-            (entry_quote.ask - entry_quote.bid) / entry_quote.mid * D10000
-        )
-        trades.append((entry_bar.event_time_ms, gross, net, spread_bps))
+        entry_spread_bps = (entry_quote.ask - entry_quote.bid) / entry_quote.mid * D10000
+        exit_spread_bps = (exit_quote.ask - exit_quote.bid) / exit_quote.mid * D10000
+        trades.append((entry_bar.event_time_ms, exit_bar.event_time_ms, gross, net, entry_spread_bps, exit_spread_bps))
 
     return _summarize(
         split=split,
