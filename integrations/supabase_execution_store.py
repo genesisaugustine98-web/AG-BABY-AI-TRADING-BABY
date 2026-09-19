@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import urllib.parse
 import urllib.request
+import certifi
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -47,7 +49,7 @@ class SupabaseExecutionStore:
             headers["Prefer"] = prefer
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds, context=ssl.create_default_context(cafile=certifi.where())) as response:
                 raw = response.read().decode("utf-8")
                 return json.loads(raw) if raw else None
         except Exception as exc:
