@@ -45,7 +45,8 @@ def test_tsmom_fit_produces_validation_metadata():
     assert result.validation_n >= 30
     assert result.holdout_n >= 30
     assert result.calibration_score >= Decimal("0.65")
-    assert result.validation_status == "validated"
+    assert result.validation_status == "candidate"
+    assert result.calibration_gate == "passed"
 
 
 def test_tsmom_prediction_is_point_in_time():
