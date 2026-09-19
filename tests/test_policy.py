@@ -13,6 +13,12 @@ def base():
 
 def test_approve(): assert AdmissionPolicy().evaluate(base())[0] == Decision.APPROVE
 
+def test_future_quote_is_rejected():
+    c=replace(base(), market=MarketState(EventState.NORMAL,-1,Decimal('0.00001'),Decimal('0.90'),Decimal('0.10'),Decimal('0.95'),Decimal('0.99')))
+    decision, reasons = AdmissionPolicy().evaluate(c)
+    assert decision == Decision.DENY
+    assert 'FUTURE_QUOTE_TIMESTAMP' in reasons
+
 def test_stale():
     c=replace(base(), market=MarketState(EventState.NORMAL,5000,Decimal('0.00001'),Decimal('0.90'),Decimal('0.10'),Decimal('0.95'),Decimal('0.99')))
     assert AdmissionPolicy().evaluate(c)[0] == Decision.DENY
