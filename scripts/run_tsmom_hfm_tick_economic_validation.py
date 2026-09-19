@@ -40,7 +40,7 @@ def main() -> int:
     parser.add_argument("--lookback", type=int, default=24)
     parser.add_argument("--horizon", type=int, default=6)
     parser.add_argument("--delay-bars", type=int, default=1)
-    parser.add_argument("--max-quote-gap-seconds", type=int, default=300)
+    parser.add_argument("--max-quote-staleness-seconds", type=int, default=300)
     parser.add_argument("--slippage-bps-one-way", type=Decimal, default=Decimal("0"))
     parser.add_argument("--commission-bps-one-way", type=Decimal, default=Decimal("0"))
     parser.add_argument("--financing-bps-per-day", type=Decimal, default=Decimal("0"))
@@ -52,8 +52,8 @@ def main() -> int:
     intervals = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}
     if timeframe not in intervals:
         raise SystemExit(f"unsupported timeframe:{timeframe}")
-    if args.max_quote_gap_seconds < 0:
-        raise SystemExit("max quote gap cannot be negative")
+    if args.max_quote_staleness_seconds < 0:
+        raise SystemExit("max quote staleness cannot be negative")
 
     gateway = DemoOnlyMT5Gateway()
     gateway.connect_and_verify_demo()
@@ -81,7 +81,7 @@ def main() -> int:
             return quote_cache.quote_at_or_before(
                 symbol=args.symbol,
                 event_time_ms=timestamp_ms,
-                max_gap_ms=args.max_quote_gap_seconds * 1000,
+                max_gap_ms=args.max_quote_staleness_seconds * 1000,
             )
 
         results = {}
@@ -107,7 +107,7 @@ def main() -> int:
                 "missing_exit_quote": result.missing_exit_quote,
                 "sample_start": _iso(result.sample_start),
                 "sample_end": _iso(result.sample_end),
-                "max_quote_gap_seconds": args.max_quote_gap_seconds,
+                "max_quote_staleness_seconds": args.max_quote_staleness_seconds,
                 "slippage_one_way_bps": str(result.slippage_one_way_bps),
                 "commission_one_way_bps": str(result.commission_one_way_bps),
                 "financing_bps_per_day": str(result.financing_bps_per_day),
@@ -156,7 +156,7 @@ def main() -> int:
                 "exit": "BUY=bid, SELL=ask",
                 "historical_quote_source": "MT5 COPY_TICKS_INFO",
                 "quote_selection": "latest valid Bid/Ask quote at or before scheduled execution timestamp",
-                "max_quote_gap_seconds": args.max_quote_gap_seconds,
+                "max_quote_staleness_seconds": args.max_quote_staleness_seconds,
             },
             "cost_assumptions": {
                 "slippage_one_way_bps": str(args.slippage_bps_one_way),
