@@ -20,7 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from apps.execution_gateway.mt5_gateway import DemoOnlyMT5Gateway
 from apps.execution_gateway.mt5_market_data import MT5MarketDataAdapter
-from packages.tsmom_economic import chronological_split_indices, evaluate_split
+from packages.tsmom_economic import chronological_split_indices, evaluate_split_sensitivity
 from packages.tsmom_forecast import TSMOMForecastModel, dataset_fingerprint
 
 
@@ -69,20 +69,24 @@ def main() -> int:
         )
         splits = chronological_split_indices(len(rows))
 
+        split_results = {}
+        for split_name in ("validation", "holdout"):
+            lo, hi = splits[split_name]
+            split_results[split_name] = evaluate_split_sensitivity(
+                model,
+                rows,
+                split=split_name,
+                start_index=lo,
+                end_index=hi,
+                one_way_costs_bps=costs,
+                delay_bars=args.delay_bars,
+            )
+
         sensitivity = []
         for cost in costs:
             cells = {}
             for split_name in ("validation", "holdout"):
-                lo, hi = splits[split_name]
-                result = evaluate_split(
-                    model,
-                    rows,
-                    split=split_name,
-                    start_index=lo,
-                    end_index=hi,
-                    one_way_cost_bps=cost,
-                    delay_bars=args.delay_bars,
-                )
+                result = split_results[split_name][cost]
                 cells[split_name] = {
                     "n": result.n,
                     "skipped_no_signal": result.skipped_no_signal,
