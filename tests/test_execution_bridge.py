@@ -65,7 +65,7 @@ def make_instrument():
     )
 
 
-def registered(*, status="validated", calibration=Decimal("0.80"), execution_grade=False):
+def registered(*, status="validated", calibration=Decimal("0.80"), execution_grade=True):
     return RegisteredModel(
         "model-a", "1", status, "dataset-a", "abc123",
         calibration, execution_grade, "features-a",
