@@ -56,6 +56,7 @@ def test_tsmom_prediction_is_point_in_time():
 
     decision_time = rows[120].event_time_ms
     forecast = model.predict(rows, decision_time_ms=decision_time)
+    indexed = model.predict_at_index(rows, decision_index=120)
 
     assert forecast.model_id == "tsmom-fixed-v1"
     assert forecast.version == "1"
@@ -64,6 +65,8 @@ def test_tsmom_prediction_is_point_in_time():
     assert forecast.generated_at_ms == rows[120].event_time_ms
     assert "bar-121" in forecast.evidence_ids
     assert "bar-122" not in forecast.evidence_ids
+    assert indexed.expected_return == forecast.expected_return
+    assert indexed.probability_up == forecast.probability_up
 
 
 def test_tsmom_requires_enough_training_data():
