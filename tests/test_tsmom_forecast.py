@@ -106,6 +106,7 @@ def test_mt5_market_data_excludes_forming_bar_and_normalizes_time():
     assert rows[0].source == "hfm_mt5"
     assert rows[0].observation_id.startswith("mt5:USDJPY:H1:")
     assert rows[0].event_time_ms < rows[-1].event_time_ms
+    assert all(row.usable_at_ms == row.event_time_ms + 3600 * 1000 for row in rows)
 
 
 def test_mt5_market_data_rejects_unsupported_timeframe():
