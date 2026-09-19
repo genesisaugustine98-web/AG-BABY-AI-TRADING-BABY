@@ -120,6 +120,8 @@ def main() -> int:
                 "sharpe_like": None if result.sharpe_like is None else str(result.sharpe_like),
                 "mean_entry_spread_bps": None if result.mean_entry_spread_bps is None else str(result.mean_entry_spread_bps),
                 "median_entry_spread_bps": None if result.median_entry_spread_bps is None else str(result.median_entry_spread_bps),
+                "mean_exit_spread_bps": None if result.mean_exit_spread_bps is None else str(result.mean_exit_spread_bps),
+                "median_exit_spread_bps": None if result.median_exit_spread_bps is None else str(result.median_exit_spread_bps),
             }
 
         report = {
