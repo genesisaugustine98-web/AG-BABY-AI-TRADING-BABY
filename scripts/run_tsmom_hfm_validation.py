@@ -7,10 +7,18 @@ It never calls order_check/order_send and never writes model_registry automatica
 from __future__ import annotations
 
 import argparse
+import sys
 import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+
+# When invoked as `python scripts/<file>.py`, Python places `scripts/` on
+# sys.path rather than the repository root. Add the root explicitly so the
+# repository packages resolve exactly as they do under pytest/CI.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from apps.execution_gateway.mt5_gateway import DemoOnlyMT5Gateway
 from apps.execution_gateway.mt5_market_data import MT5MarketDataAdapter
