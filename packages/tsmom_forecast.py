@@ -266,7 +266,7 @@ class TSMOMForecastModel:
         return Forecast(
             self.MODEL_ID,
             self.VERSION,
-            current.event_time_ms,
+            current.usable_at_ms,
             self.horizon_seconds,
             expected,
             "fraction",
@@ -294,7 +294,7 @@ class TSMOMForecastModel:
             raise RuntimeError("model must be fitted before predict")
         if decision_index < 0 or decision_index >= len(bars):
             raise ValueError("decision_index out of range")
-        decision_time_ms = bars[decision_index].event_time_ms
+        decision_time_ms = bars[decision_index].usable_at_ms
         eligible: list[PriceBar] = []
         for index in range(decision_index, -1, -1):
             row = bars[index]
