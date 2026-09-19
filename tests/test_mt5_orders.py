@@ -29,7 +29,7 @@ class FakeMT5:
         return SimpleNamespace(visible=True, volume_min=0.01, volume_max=10.0, volume_step=0.01, filling_mode=0)
 
     def symbol_info_tick(self, symbol):
-        return SimpleNamespace(bid=150.0, ask=150.002)
+        return SimpleNamespace(time=1789824759, bid=150.0, ask=150.002)
 
     def order_check(self, request):
         return SimpleNamespace(retcode=self.TRADE_RETCODE_DONE)
@@ -62,10 +62,11 @@ def test_demo_order_uses_order_check_then_order_send(monkeypatch):
     assert result.outcome == "ACCEPTED"
     assert result.broker_order_id == "555"
     sent = mt5.requests[0]
-    assert sent.comment == "AGDEMO-123"
-    assert sent.volume == 0.1
-    assert sent.sl == 149.0
-    assert sent.tp == 152.0
+    assert isinstance(sent, dict)
+    assert sent["comment"] == "AGDEMO-123"
+    assert sent["volume"] == 0.1
+    assert sent["sl"] == 149.0
+    assert sent["tp"] == 152.0
 
 
 def test_demo_order_rejects_wrong_stop(monkeypatch):
@@ -79,3 +80,11 @@ def test_demo_order_refuses_live(monkeypatch):
     monkeypatch.setenv("EXECUTION_ENV", "live")
     with pytest.raises(RuntimeError, match="demo-only"):
         DemoOnlyMT5OrderAdapter(FakeMT5())
+
+
+def test_demo_order_rejects_zero_tick(monkeypatch):
+    monkeypatch.setenv("EXECUTION_ENV", "demo")
+    mt5 = FakeMT5()
+    mt5.symbol_info_tick = lambda symbol: SimpleNamespace(time=0, bid=0.0, ask=0.0)
+    with pytest.raises(RuntimeError, match="invalid_or_stale_symbol_tick"):
+        DemoOnlyMT5OrderAdapter(mt5).submit(req())
