@@ -80,9 +80,10 @@ class MT5QuoteHistoryAdapter:
 
         quotes: list[HistoricalQuote] = []
         for row in ticks:
-            dtype = getattr(row, "dtype", None)
-            names = getattr(dtype, "names", None)
-            raw_time_msc = row["time_msc"] if names and "time_msc" in names else row["time"] * 1000
+            try:
+                raw_time_msc = row["time_msc"]
+            except (KeyError, IndexError, TypeError):
+                raw_time_msc = row["time"] * 1000
             try:
                 event_time_ms = broker_server_epoch_ms_to_utc_ms(int(raw_time_msc))
                 bid = Decimal(str(row["bid"]))
