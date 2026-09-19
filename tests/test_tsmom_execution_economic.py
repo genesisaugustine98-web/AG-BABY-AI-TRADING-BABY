@@ -37,6 +37,8 @@ def test_quote_aware_replay_uses_executable_side_of_spread():
     assert result.missing_entry_quote == 0
     assert result.missing_exit_quote == 0
     assert result.mean_entry_spread_bps > 0
+    assert result.mean_midpoint_gross is not None
+    assert result.mean_spread_drag_bps > 0
 
 
 def test_quote_aware_replay_counts_missing_quotes():
