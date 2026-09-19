@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import Any, Mapping, Protocol
 
 from packages.fill_accounting import BrokerConfirmedFill, PositionState
+from apps.execution_gateway.mt5_time import broker_server_epoch_ms_to_utc_ms, utc_iso_from_broker_epoch_ms
 
 
 class MT5DealsAPI(Protocol):
@@ -124,21 +125,21 @@ def _execution_time(deal: Any) -> str:
     if time_msc is not None:
         try:
             milliseconds = int(time_msc)
-            return datetime.fromtimestamp(milliseconds / 1000, tz=timezone.utc).isoformat()
-        except (TypeError, ValueError, OverflowError, OSError):
+            return utc_iso_from_broker_epoch_ms(milliseconds)
+        except (TypeError, ValueError, OverflowError, OSError, RuntimeError):
             pass
     raw_seconds = getattr(deal, "time", None)
     try:
-        return datetime.fromtimestamp(int(raw_seconds), tz=timezone.utc).isoformat()
-    except (TypeError, ValueError, OverflowError, OSError) as exc:
+        return utc_iso_from_broker_epoch_ms(int(raw_seconds) * 1000)
+    except (TypeError, ValueError, OverflowError, OSError, RuntimeError) as exc:
         raise ValueError("deal execution time is invalid") from exc
 
 
 def _deal_time_msc(deal: BrokerDealRecord) -> int:
-    raw = deal.metadata.get("deal_time_msc")
-    if raw is not None:
+    normalized = deal.metadata.get("deal_time_msc")
+    if normalized is not None:
         try:
-            return max(0, int(raw))
+            return max(0, int(normalized))
         except (TypeError, ValueError):
             pass
     timestamp = datetime.fromisoformat(deal.filled_at.replace("Z", "+00:00"))
@@ -203,6 +204,20 @@ class MT5DealCollector:
             raw_commission = _decimal(getattr(deal, "commission", 0), "commission")
             financing = _decimal(getattr(deal, "swap", 0), "swap")
             entry = getattr(deal, "entry", None)
+            raw_time_msc = getattr(deal, "time_msc", None)
+            normalized_time_msc = None
+            if raw_time_msc is not None:
+                try:
+                    normalized_time_msc = broker_server_epoch_ms_to_utc_ms(int(raw_time_msc))
+                except (TypeError, ValueError, OverflowError, RuntimeError):
+                    normalized_time_msc = None
+            if normalized_time_msc is None:
+                try:
+                    raw_time = int(getattr(deal, "time"))
+                    normalized_time_msc = broker_server_epoch_ms_to_utc_ms(raw_time * 1000)
+                except (TypeError, ValueError, OverflowError, RuntimeError) as exc:
+                    raise ValueError(f"deal {ticket} has invalid execution timestamp") from exc
+
             normalized.append(
                 BrokerDealRecord(
                     broker_fill_id=str(ticket),
@@ -227,7 +242,9 @@ class MT5DealCollector:
                         "fee": str(getattr(deal, "fee", 0)),
                         "profit": str(getattr(deal, "profit", 0)),
                         "raw_commission": str(raw_commission),
-                        "deal_time_msc": getattr(deal, "time_msc", None),
+                        # Internal time is normalized UTC; retain broker raw time separately for audit.
+                        "deal_time_msc": normalized_time_msc,
+                        "broker_time_msc": raw_time_msc,
                     },
                 )
             )
