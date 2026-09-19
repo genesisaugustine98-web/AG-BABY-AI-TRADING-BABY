@@ -51,7 +51,7 @@ class SupabaseOrderStore(InternalOrderResolver):
         self.environment = _required(environment, "environment")
         self.timeout_seconds = timeout_seconds
         self.base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-        self.api_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "") or os.environ.get("SUPABASE_SECRET_KEY", "")
+        self.api_key = os.environ.get("SUPABASE_SECRET_KEY", "") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
         if not self.base_url or not self.api_key:
             raise RuntimeError("SUPABASE_URL and server-side Supabase key are required")
         if not self.base_url.startswith("https://"):
