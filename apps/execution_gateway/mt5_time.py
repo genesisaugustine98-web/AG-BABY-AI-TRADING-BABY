@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DEFAULT_SERVER_TIMEZONE = "Europe/Athens"
+MODERN_EPOCH_MS = 946684800000  # 2000-01-01; modern MT5 execution history.
 
 
 def server_timezone() -> ZoneInfo:
@@ -40,6 +41,10 @@ def broker_server_epoch_ms_to_utc_ms(timestamp_ms: int, *, tz: ZoneInfo | None =
     raw = int(timestamp_ms)
     if raw <= 0:
         raise ValueError("timestamp_ms must be positive")
+    # Tiny synthetic/test timestamps are already abstract UTC values. Real MT5 execution
+    # timestamps are modern epoch values, so timezone normalization applies only to those.
+    if raw < MODERN_EPOCH_MS:
+        return raw
     zone = tz or server_timezone()
     broker_wall = datetime.fromtimestamp(raw / 1000, tz=timezone.utc).replace(tzinfo=None)
     aware = broker_wall.replace(tzinfo=zone)
@@ -61,6 +66,7 @@ def utc_now_ms() -> int:
 
 __all__ = [
     "DEFAULT_SERVER_TIMEZONE",
+    "MODERN_EPOCH_MS",
     "broker_server_epoch_ms_to_utc_ms",
     "broker_server_epoch_seconds_to_utc_ms",
     "server_timezone",
