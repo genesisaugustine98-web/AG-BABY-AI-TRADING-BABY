@@ -58,8 +58,17 @@ def test_quote_adapter_rejects_naive_datetimes():
 def test_daily_cache_uses_bounded_storage():
     cache = RollingDailyQuoteCache(MT5QuoteHistoryAdapter(FakeTicks()), max_days=2)
     # Historical broker timestamps are normalized to UTC before matching.
-    # Keep the requested execution time just before the normalized fake quote.
-    target = 1_700_000_000_000 - (3 * 60 * 60 * 1000) - 1_000
-    quote = cache.quote_at_or_after(symbol="USDJPY", event_time_ms=target, max_gap_ms=5_000)
+    normalized_first = 1_700_000_000_000 - (3 * 60 * 60 * 1000)
+    target = normalized_first + 500
+    quote = cache.quote_at_or_before(symbol="USDJPY", event_time_ms=target, max_gap_ms=5_000)
     assert quote is not None
+    assert quote.event_time_ms == normalized_first
     assert len(cache._cache) <= 2
+
+
+def test_quote_at_or_before_never_returns_future_quote():
+    cache = RollingDailyQuoteCache(MT5QuoteHistoryAdapter(FakeTicks()), max_days=2)
+    normalized_first = 1_700_000_000_000 - (3 * 60 * 60 * 1000)
+    target = normalized_first - 500
+    quote = cache.quote_at_or_before(symbol="USDJPY", event_time_ms=target, max_gap_ms=5_000)
+    assert quote is None
