@@ -29,7 +29,7 @@ class SupabaseExecutionStore:
             raise ValueError("invalid execution environment")
         self.timeout_seconds = timeout_seconds
         self.base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-        self.api_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        self.api_key = os.environ.get("SUPABASE_SECRET_KEY", "") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
         if not self.base_url or not self.api_key:
             raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required server-side")
         if not self.base_url.startswith("https://"):
@@ -62,6 +62,7 @@ class SupabaseExecutionStore:
             "select": "order_id,client_order_id,instrument,state,filled_quantity",
             "environment": f"eq.{self.environment}",
             "state": "not.in.(FILLED,REJECTED,CANCELLED,CANCELED)",
+            "is_test_fixture": "eq.false",
             "order_id": "not.is.null",
         }) or []
         return tuple(
@@ -72,7 +73,7 @@ class SupabaseExecutionStore:
 
     def positions(self) -> tuple[BrokerPositionTruth, ...]:
         rows = self._request("GET", "execution_positions", query={
-            "select": "instrument,net_quantity", "environment": f"eq.{self.environment}"
+            "select": "instrument,net_quantity", "environment": f"eq.{self.environment}", "is_test_fixture": "eq.false"
         }) or []
         return tuple(BrokerPositionTruth(str(row["instrument"]), self._decimal(row["net_quantity"])) for row in rows)
 
