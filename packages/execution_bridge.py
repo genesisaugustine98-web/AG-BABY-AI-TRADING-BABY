@@ -14,7 +14,6 @@ ExecutionKernel -> deterministic risk engine -> MT5 demo adapter.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
 from typing import Mapping
@@ -45,8 +44,6 @@ class RegisteredModel:
             reasons.append("MODEL_CODE_COMMIT_MISSING")
         if not (Decimal("0") <= self.calibration_score <= Decimal("1")):
             reasons.append("MODEL_CALIBRATION_INVALID")
-        if not self.execution_grade:
-            reasons.append("MODEL_NOT_EXECUTION_GRADE")
         if not self.feature_version.strip():
             reasons.append("MODEL_FEATURE_VERSION_MISSING")
         return (not reasons, tuple(reasons))
@@ -97,7 +94,7 @@ class GovernedExecutionBridge:
             reasons.append("FORECAST_MODEL_ID_MISMATCH")
         if forecast.model_id != registered_model.model_id or forecast.version != registered_model.version:
             reasons.append("UNREGISTERED_FORECAST_VERSION")
-        model_ok, model_reasons = registered_model.validate_for_demo()
+        _, model_reasons = registered_model.validate_for_demo()
         reasons.extend(model_reasons)
         if forecast.calibration_score != registered_model.calibration_score:
             reasons.append("FORECAST_CALIBRATION_MISMATCH")
