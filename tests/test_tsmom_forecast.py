@@ -109,3 +109,12 @@ def test_mt5_market_data_rejects_unsupported_timeframe():
         MT5MarketDataAdapter(FakeMT5()).fetch_completed_bars(
             symbol="USDJPY", timeframe="M2", count=5
         )
+
+
+def test_tsmom_training_targets_do_not_cross_split_boundary():
+    rows = bars(240)
+    samples = TSMOMForecastModel._samples(
+        rows, 12, 120, 12, 6
+    )
+    assert samples
+    assert max(index + 6 for _, _, index, _ in samples) < 120
