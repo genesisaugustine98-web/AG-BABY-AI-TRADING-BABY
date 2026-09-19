@@ -121,6 +121,8 @@ def main() -> int:
                 "mean_entry_spread_bps": None if result.mean_entry_spread_bps is None else str(result.mean_entry_spread_bps),
                 "median_entry_spread_bps": None if result.median_entry_spread_bps is None else str(result.median_entry_spread_bps),
                 "mean_exit_spread_bps": None if result.mean_exit_spread_bps is None else str(result.mean_exit_spread_bps),
+                "mean_midpoint_gross": None if result.mean_midpoint_gross is None else str(result.mean_midpoint_gross),
+                "mean_spread_drag_bps": None if result.mean_spread_drag_bps is None else str(result.mean_spread_drag_bps),
                 "median_exit_spread_bps": None if result.median_exit_spread_bps is None else str(result.median_exit_spread_bps),
             }
 
