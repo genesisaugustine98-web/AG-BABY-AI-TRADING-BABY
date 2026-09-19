@@ -135,6 +135,7 @@ def test_bridge_builds_intent_from_admitted_candidate():
 
 def test_bridge_requires_forecast_registry_calibration_match():
     result = GovernedExecutionBridge().build_intent(
+        strategy_id="strategy-a",
         candidate=make_candidate(),
         forecast=make_forecast(),
         registered_model=registered(calibration=Decimal("0.79")),
