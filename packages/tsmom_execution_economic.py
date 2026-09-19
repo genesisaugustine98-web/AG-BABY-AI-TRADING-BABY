@@ -43,6 +43,8 @@ class ExecutionEconomicResult:
     median_entry_spread_bps: Decimal | None
     mean_exit_spread_bps: Decimal | None
     median_exit_spread_bps: Decimal | None
+    mean_midpoint_gross: Decimal | None
+    mean_spread_drag_bps: Decimal | None
 
 
 def _max_drawdown(values: Sequence[Decimal]) -> Decimal | None:
@@ -71,7 +73,7 @@ def _median(values: Sequence[Decimal]) -> Decimal | None:
 def _summarize(
     *,
     split: str,
-    rows: list[tuple[int, int, Decimal, Decimal, Decimal, Decimal]],
+    rows: list[tuple[int, int, Decimal, Decimal, Decimal, Decimal, Decimal]],
     skipped_no_signal: int,
     missing_entry_quote: int,
     missing_exit_quote: int,
@@ -85,15 +87,18 @@ def _summarize(
             split, 0, skipped_no_signal, missing_entry_quote, missing_exit_quote,
             None, None, max_quote_gap_ms, slippage_one_way_bps,
             commission_one_way_bps, financing_bps_per_day,
-            None, None, None, None, None, None, None, None, None, None, None
+            None, None, None, None, None, None, None, None, None, None, None, None
         )
 
     gross = [row[2] for row in rows]
     net = [row[3] for row in rows]
+    midpoint_gross = [row[6] for row in rows]
     entry_spreads = [row[4] for row in rows]
     exit_spreads = [row[5] for row in rows]
     mean_gross = sum(gross, D0) / Decimal(len(gross))
     mean_net = sum(net, D0) / Decimal(len(net))
+    mean_midpoint_gross = sum(midpoint_gross, D0) / Decimal(len(midpoint_gross))
+    mean_spread_drag_bps = (mean_midpoint_gross - mean_gross) * D10000
     cumulative = D1
     for value in net:
         cumulative *= D1 + value
@@ -115,7 +120,8 @@ def _summarize(
         cumulative, _max_drawdown(net), Decimal(wins) / Decimal(len(net)),
         profit_factor, sharpe_like,
         sum(entry_spreads, D0) / Decimal(len(entry_spreads)), _median(entry_spreads),
-        sum(exit_spreads, D0) / Decimal(len(exit_spreads)), _median(exit_spreads)
+        sum(exit_spreads, D0) / Decimal(len(exit_spreads)), _median(exit_spreads),
+        mean_midpoint_gross, mean_spread_drag_bps
     )
 
 
@@ -162,7 +168,7 @@ def evaluate_split_with_quotes(
     if delay_bars < 0:
         raise ValueError("delay_bars cannot be negative")
 
-    trades: list[tuple[int, int, Decimal, Decimal, Decimal, Decimal]] = []
+    trades: list[tuple[int, int, Decimal, Decimal, Decimal, Decimal, Decimal]] = []
     skipped_no_signal = 0
     missing_entry_quote = 0
     missing_exit_quote = 0
@@ -208,8 +214,10 @@ def evaluate_split_with_quotes(
 
         if side == "BUY":
             gross = exit / entry - D1
+            midpoint_gross = exit_quote.mid / entry_quote.mid - D1
         else:
             gross = entry / exit - D1
+            midpoint_gross = entry_quote.mid / exit_quote.mid - D1
 
         holding_days = Decimal(
             max(0, exit_bar.event_time_ms - entry_bar.event_time_ms)
@@ -219,7 +227,7 @@ def evaluate_split_with_quotes(
         net = gross - financing - commission
         entry_spread_bps = (entry_quote.ask - entry_quote.bid) / entry_quote.mid * D10000
         exit_spread_bps = (exit_quote.ask - exit_quote.bid) / exit_quote.mid * D10000
-        trades.append((entry_bar.event_time_ms, exit_bar.event_time_ms, gross, net, entry_spread_bps, exit_spread_bps))
+        trades.append((entry_bar.event_time_ms, exit_bar.event_time_ms, gross, net, entry_spread_bps, exit_spread_bps, midpoint_gross))
 
     return _summarize(
         split=split,
