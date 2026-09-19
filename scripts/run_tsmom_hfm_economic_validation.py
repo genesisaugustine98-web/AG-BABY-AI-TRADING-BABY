@@ -85,6 +85,7 @@ def main() -> int:
                 )
                 cells[split_name] = {
                     "n": result.n,
+                    "skipped_no_signal": result.skipped_no_signal,
                     "sample_start": _iso(result.sample_start) if result.sample_start else None,
                     "sample_end": _iso(result.sample_end) if result.sample_end else None,
                     "assumed_one_way_cost_bps": str(result.assumed_one_way_cost_bps),
