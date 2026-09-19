@@ -70,6 +70,7 @@ class GovernedExecutionBridge:
     def build_intent(
         self,
         *,
+        strategy_id: str,
         candidate: OpportunityCandidate,
         forecast: ModelForecast,
         registered_model: RegisteredModel,
@@ -83,6 +84,9 @@ class GovernedExecutionBridge:
         horizon_seconds: int,
     ) -> BridgeResult:
         reasons: list[str] = []
+        strategy_id = strategy_id.strip()
+        if not strategy_id:
+            reasons.append("STRATEGY_ID_REQUIRED")
 
         if candidate.state != "ADMITTED":
             reasons.append("OPPORTUNITY_NOT_ADMITTED")
@@ -146,7 +150,7 @@ class GovernedExecutionBridge:
             (),
             TradeIntent(
                 intent_id=intent_id,
-                strategy_id=candidate.model_id,
+                strategy_id=strategy_id,
                 strategy_version=candidate.model_version,
                 policy_version=self.policy_version,
                 symbol=instrument.symbol,
