@@ -3,7 +3,8 @@ import pytest
 from integrations.supabase_ledger import build_event
 
 
-def test_build_event_defaults_to_research():
+def test_build_event_defaults_to_research(monkeypatch):
+    monkeypatch.delenv("EXECUTION_ENV", raising=False)
     event = build_event(
         integration_name="github",
         run_id="run-1",

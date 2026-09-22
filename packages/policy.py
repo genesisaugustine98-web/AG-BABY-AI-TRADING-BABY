@@ -21,17 +21,26 @@ class AdmissionPolicy:
         if ctx.market.broker_health < Decimal('0.80'): reasons.append('BROKER_HEALTH')
         if ctx.market.broker_health < self.max_broker_stress: reasons.append('BROKER_STRESS')
         if ctx.market.data_health < self.max_data_stress: reasons.append('DATA_STRESS')
-        if ctx.market.quote_age_ms > self.max_quote_age_ms: reasons.append('STALE_QUOTE')
+        if ctx.quote.event_time_ms > ctx.now_ms: reasons.append('FUTURE_QUOTE_TIMESTAMP')
+        if ctx.market.quote_age_ms < 0: reasons.append('NEGATIVE_QUOTE_AGE')
+        elif ctx.market.quote_age_ms > self.max_quote_age_ms: reasons.append('STALE_QUOTE')
         if ctx.market.spread_fraction_of_price > self.max_spread_frac: reasons.append('WIDE_SPREAD')
         if ctx.market.liquidity_score < self.min_liquidity: reasons.append('LOW_LIQUIDITY')
         if ctx.market.intervention_score >= self.max_intervention: reasons.append('INTERVENTION_RISK')
         if ctx.market.event_state in {EventState.IMMEDIATE_EVENT, EventState.INTERVENTION_RISK, EventState.BROKER_STRESS, EventState.DATA_STRESS}:
             reasons.append(f'BLOCKED_EVENT_STATE:{ctx.market.event_state.value}')
         if ctx.forecast.generated_at_ms > ctx.now_ms: reasons.append('FUTURE_FORECAST_TIMESTAMP')
-        if ctx.forecast.probability_up < self.min_probability: reasons.append('LOW_PROBABILITY')
+        if ctx.forecast.expected_return > Decimal('0'):
+            directional_probability = ctx.forecast.probability_up
+        elif ctx.forecast.expected_return < Decimal('0'):
+            directional_probability = Decimal('1') - ctx.forecast.probability_up
+        else:
+            directional_probability = Decimal('0')
+            reasons.append('ZERO_FORECAST_DIRECTION')
+        if directional_probability < self.min_probability: reasons.append('LOW_PROBABILITY')
         if ctx.forecast.calibration_score < self.min_calibration: reasons.append('BAD_CALIBRATION')
         if ctx.forecast.expected_return_unit != 'fraction': reasons.append('FORECAST_UNIT_MISMATCH')
-        executable_edge = ctx.forecast.expected_return - ctx.estimated_cost_fraction - ctx.safety_margin_fraction
+        executable_edge = abs(ctx.forecast.expected_return) - ctx.estimated_cost_fraction - ctx.safety_margin_fraction
         if executable_edge < self.min_executable_edge: reasons.append('EDGE_BELOW_EXECUTABLE_THRESHOLD')
         if ctx.portfolio.gross_risk_fraction > self.max_gross_risk: reasons.append('GROSS_RISK_LIMIT')
         if ctx.portfolio.account_drawdown_fraction > self.max_drawdown: reasons.append('DRAWDOWN_LIMIT')

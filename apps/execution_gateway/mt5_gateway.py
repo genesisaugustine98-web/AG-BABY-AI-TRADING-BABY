@@ -1,4 +1,4 @@
-"""Optional MT5 adapter. Secrets are read from environment; demo proof is fail-closed."""
+"""MT5 demo adapter. Secrets are environment-only and execution is fail-closed."""
 from __future__ import annotations
 
 import os
@@ -39,6 +39,13 @@ class DemoOnlyMT5Gateway:
             ok = mt5.initialize(**kwargs)
         if not ok:
             raise RuntimeError(f"initialize failed: {mt5.last_error()}")
+        terminal_info = mt5.terminal_info()
+        if terminal_info is None or not bool(getattr(terminal_info, "connected", False)):
+            mt5.shutdown()
+            raise RuntimeError("MT5 terminal is not connected")
+        if not bool(getattr(terminal_info, "trade_allowed", False)):
+            mt5.shutdown()
+            raise RuntimeError("MT5 terminal trading is disabled; enable Algo Trading before execution")
         acct = mt5.account_info()
         if acct is None:
             mt5.shutdown()
@@ -47,27 +54,70 @@ class DemoOnlyMT5Gateway:
         if not explicit_demo:
             mt5.shutdown()
             raise RuntimeError("could not positively prove demo account")
+        if not bool(getattr(acct, "trade_allowed", False)) or not bool(getattr(acct, "trade_expert", False)):
+            mt5.shutdown()
+            raise RuntimeError("HFM demo account or expert trading permission is disabled")
         self.connected = True
         return {"login": acct.login, "server": acct.server, "trade_allowed": acct.trade_allowed}
 
+    def mt5_api(self) -> Any:
+        """Return the verified MT5 API handle without exposing credentials."""
+        if not self.connected:
+            raise RuntimeError("MT5 gateway is not connected")
+        return self._import()
+
+    def account_snapshot(self) -> dict[str, Any]:
+        """Return current account truth without exposing credentials."""
+        if not self.connected:
+            raise RuntimeError("MT5 gateway is not connected")
+        mt5 = self._import()
+        acct = mt5.account_info()
+        if acct is None:
+            raise RuntimeError(f"account_info failed:{mt5.last_error()}")
+        fields = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "broker": "mt5",
+            "login": getattr(acct, "login", None),
+            "server": getattr(acct, "server", None),
+            "currency": getattr(acct, "currency", None),
+            "balance": Decimal(str(getattr(acct, "balance", 0))),
+            "equity": Decimal(str(getattr(acct, "equity", 0))),
+            "margin": Decimal(str(getattr(acct, "margin", 0))),
+            "margin_free": Decimal(str(getattr(acct, "margin_free", 0))),
+            "margin_level": Decimal(str(getattr(acct, "margin_level", 0))) if getattr(acct, "margin_level", None) is not None else None,
+            "trade_allowed": bool(getattr(acct, "trade_allowed", False)),
+            "trade_mode": str(getattr(acct, "trade_mode", "")),
+            "leverage": getattr(acct, "leverage", None),
+            "company": getattr(acct, "company", None),
+            "name": getattr(acct, "name", None),
+        }
+        return fields
+
     @staticmethod
     def _state_name(mt5: Any, value: Any) -> str:
-        names = (
-            "TRADE_ORDER_STATE_STARTED",
-            "TRADE_ORDER_STATE_PLACED",
-            "TRADE_ORDER_STATE_CANCELED",
-            "TRADE_ORDER_STATE_PARTIAL",
-            "TRADE_ORDER_STATE_FILLED",
-            "TRADE_ORDER_STATE_REJECTED",
-            "TRADE_ORDER_STATE_EXPIRED",
-            "TRADE_ORDER_STATE_REQUEST_ADD",
-            "TRADE_ORDER_STATE_REQUEST_MODIFY",
-            "TRADE_ORDER_STATE_REQUEST_CANCEL",
-        )
-        for name in names:
-            if getattr(mt5, name, object()) == value:
-                return name
-        return str(value)
+        """Map MT5 state constants into the repository's canonical lifecycle vocabulary."""
+        mapping = {
+            getattr(mt5, "TRADE_ORDER_STATE_STARTED", object()): "SUBMITTING",
+            getattr(mt5, "TRADE_ORDER_STATE_PLACED", object()): "ACCEPTED",
+            getattr(mt5, "TRADE_ORDER_STATE_CANCELED", object()): "CANCELED",
+            getattr(mt5, "TRADE_ORDER_STATE_PARTIAL", object()): "PARTIAL",
+            getattr(mt5, "TRADE_ORDER_STATE_FILLED", object()): "FILLED",
+            getattr(mt5, "TRADE_ORDER_STATE_REJECTED", object()): "REJECTED",
+            getattr(mt5, "TRADE_ORDER_STATE_EXPIRED", object()): "CANCELED",
+            getattr(mt5, "TRADE_ORDER_STATE_REQUEST_ADD", object()): "ACCEPTED",
+            getattr(mt5, "TRADE_ORDER_STATE_REQUEST_MODIFY", object()): "ACCEPTED",
+            getattr(mt5, "TRADE_ORDER_STATE_REQUEST_CANCEL", object()): "ACCEPTED",
+        }
+        state = mapping.get(value)
+        return state if state is not None else str(value)
+
+    @staticmethod
+    def _client_order_id(comment: str) -> str:
+        """Accept current AGDEMO ids and legacy AG ids, but never invent identity."""
+        comment = comment.strip()
+        if comment.startswith("AGDEMO-") or comment.startswith("AG-"):
+            return comment
+        return ""
 
     def snapshot(self) -> BrokerSnapshot:
         """Return normalized point-in-time broker truth; never synthesizes fills."""
@@ -83,9 +133,7 @@ class DemoOnlyMT5Gateway:
         for order in raw_orders:
             ticket = str(getattr(order, "ticket", ""))
             comment = str(getattr(order, "comment", "") or "")
-            # An absent client id is intentionally preserved as empty; reconciliation
-            # will treat it as drift rather than guessing an identity.
-            client_order_id = comment if comment.startswith("AG-") else ""
+            client_order_id = self._client_order_id(comment)
             initial = Decimal(str(getattr(order, "volume_initial", 0)))
             current = Decimal(str(getattr(order, "volume_current", 0)))
             filled = max(Decimal("0"), initial - current)
@@ -109,17 +157,18 @@ class DemoOnlyMT5Gateway:
             volume = Decimal(str(getattr(position, "volume", 0)))
             direction = Decimal("1") if getattr(position, "type", None) == buy_type else Decimal("-1")
             by_instrument[instrument] = by_instrument.get(instrument, Decimal("0")) + direction * volume
-        positions = tuple(
-            BrokerPositionTruth(instrument, quantity)
-            for instrument, quantity in sorted(by_instrument.items())
-        )
+        positions = tuple(BrokerPositionTruth(instrument, quantity) for instrument, quantity in sorted(by_instrument.items()))
         return BrokerSnapshot(tuple(orders), positions, captured_at)
+
+    def deal_collector(self) -> MT5DealCollector:
+        """Return a collector bound to the already-verified demo MT5 session."""
+        if not self.connected:
+            raise RuntimeError("MT5 gateway is not connected")
+        return MT5DealCollector(self._import())
 
     def confirmed_deals(self, date_from: Any, date_to: Any, *, group: str | None = None) -> tuple[BrokerDealRecord, ...]:
         """Return actual broker execution deals through the same connected MT5 session."""
-        if not self.connected:
-            raise RuntimeError("MT5 gateway is not connected")
-        return MT5DealCollector(self._import()).collect(date_from, date_to, group=group)
+        return self.deal_collector().collect(date_from, date_to, group=group)
 
     def shutdown(self):
         if self.connected:

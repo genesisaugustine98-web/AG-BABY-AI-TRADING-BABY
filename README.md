@@ -1,54 +1,78 @@
-# Institutional FX Edge - Trading OS v2
+# Institutional FX Edge — Trading OS v2
 
-**Author: Genesis Koodanga Augustine - September 2026**
+**Author: Genesis Koodanga Augustine — September 2026**
 
-This repository is the canonical engineering control plane for an evidence-first FX research, decision, risk and **demo-only** execution system.
+This repository is the engineering control plane for an evidence-first FX research, decision, risk and **demo-only** execution system.
 
-## Important status
+## Current architecture
 
-- This release targets **>=80% architectural coverage of the specified end-to-end system**, not 80% trading accuracy or profitability.
-- Live trading is intentionally disabled by architecture in this v2 scaffold.
-- The LLM has no execution credentials and no direct broker authority.
-- Unknown broker results cannot transition directly to retry.
-- Risk, admission and execution are separate interfaces.
-- External platforms must consume versioned repository artifacts and must not become a second source of truth.
+`data -> quality -> provenance -> evidence -> forecast/ensemble -> opportunity -> deterministic risk -> durable order -> broker -> confirmed deal ingestion -> atomic accounting -> reconciliation -> TCA -> cockpit`
 
-## Core flow
+The design deliberately does **not** make an LLM the trader. The protected execution boundary is:
 
-`data -> quality -> provenance -> state -> forecast -> executable value -> risk -> admission -> order state machine -> broker -> reconciliation -> TCA -> monitoring`
+`AI/research proposal -> quantitative validation -> risk engine -> hard limits -> execution engine -> broker`
 
-## Platform control plane
+Live trading is disabled. MT5 submission is demo-only and the kernel itself accepts only `demo` or `paper` environments.
 
-The integration layer defines one communication contract for GitHub, Hugging Face, Kaggle, Colab, AWS, Vercel, Supabase, Render, DigitalOcean, research libraries, and the MT5 demo gateway. See `integrations/PLATFORM_MATRIX.md` and `schemas/integration_event.schema.json`.
+## Implemented foundations
 
-CI runs deterministic tests plus a secret-safe integration presence check. Credentials are never printed or committed.
+- Point-in-time market-data contracts with `event_time` / `usable_at` boundaries.
+- Fixed research splits, explicit costs/delay, evidence records and negative knowledge.
+- Multiple-testing and probability-calibration primitives.
+- Pluggable provider/model contracts with provenance-preserving ensemble forecasts.
+- Deterministic executable-edge opportunity candidates.
+- Deterministic portfolio/order risk gates with explicit health, drawdown, loss and position limits.
+- Durable internal-order repository with environment-scoped identity.
+- Demo-only MT5 order validation, `order_check`, `order_send`, bounded UNKNOWN recovery and cancel support.
+- Actual MT5 deal-history ingestion with explicit internal-order binding and restart-safe watermarks.
+- Atomic broker-confirmed fill accounting in Supabase, including immutable fills, positions and audit events.
+- Broker reconciliation with persistent freeze/unfreeze control state.
+- Broker account snapshots and an authenticated, read-only Next.js operations cockpit.
+- CI covering Python safety tests plus Next.js lint/build.
 
 ## Repository structure
 
-- `packages/` - deterministic domain/risk/policy/state/audit primitives
-- `apps/execution_gateway/` - MT5 adapter + deterministic broker test double
-- `tests/` - safety and state tests
-- `configs/` - demo-only environment template
-- `integrations/` - platform matrix, environment template, and health checker
-- `schemas/` - versioned interoperability contracts
-- `docs/` - engineering specifications and the master cookbook
+- `packages/` — deterministic domain, research, risk, execution and intelligence primitives.
+- `apps/execution_gateway/` — MT5 gateway, deal ingestion and demo order adapter.
+- `apps/reconciliation/` — restart-safe broker reconciliation and confirmed-deal runtime.
+- `apps/research/` — PIT data, replay, evidence and fixed-grid experiments.
+- `integrations/` — Supabase persistence, platform health and control-plane adapters.
+- `app/`, `components/`, `lib/` — authenticated read-only operator cockpit.
+- `supabase/migrations/` — database source of truth for execution/control-plane schema.
+- `tests/` — deterministic safety and regression suite.
+- `docs/` — execution, provenance, evidence, integration and runtime specifications.
 
-## Credential rule
+## Demo runtime
 
-Never commit broker passwords/API keys. Use an OS secret store, cloud secret manager, or protected platform secret store. Prefer GitHub OIDC for cloud deployments where supported. The LLM must never receive broker credentials.
+The intended trusted-server sequence is:
 
-## MT5 demo path
+1. Set `EXECUTION_ENV=demo`.
+2. Configure `SUPABASE_URL` and a server-side Supabase service key.
+3. Configure `MT5_SERVER`, `MT5_DEMO_SERVER`, `MT5_LOGIN`, `MT5_PASSWORD` and optional terminal path.
+4. Start the reconciliation worker first; it bootstraps broker truth and keeps execution frozen until a clean reconciliation exists.
+5. Submit intents only through `ExecutionKernel` after policy/risk admission.
+6. Treat `ACCEPTED` as acknowledgement, never as a fill. Actual fills enter through MT5 deal ingestion.
 
-Install the optional trading dependency on a Windows host with the MT5 terminal available. Configure the demo server allowlist and credentials outside Git. The gateway refuses execution unless the account can be positively verified as demo.
+## Cockpit
 
-## Development gate
+The Next.js cockpit is read-only by design. Set `COCKPIT_ACCESS_TOKEN` server-side. The browser never receives the Supabase service key or broker credentials.
 
-Before any unattended demo execution is enabled, implement broker reconciliation, exact contract validation, persistent idempotency/UNKNOWN-state recovery, kill switches, real TCA/markouts, deterministic replay, fault injection, and paper/demo promotion gates.
+## Database
+
+The connected Supabase project is protected with RLS and service-role-only execution/control tables. The execution ledger is append-only at the event level, with atomic confirmed-fill accounting and environment-scoped state.
 
 ## Research doctrine
 
-A strategy is not promoted because it looks good in-sample. Require point-in-time data, OOS evaluation, costs, delay, parameter perturbation, regime analysis, stress events, calibration, shadow/paper/demo evidence, and a predefined retirement condition.
+A strategy is not promoted because it looks good in-sample. Require point-in-time data, out-of-sample evaluation, realistic costs/delay, calibration, regime/stress analysis, multiple-testing controls, explicit retirement criteria, and durable research lineage.
 
-## Sources / design basis
+## Integration doctrine
 
-See the companion cookbook and research volumes for the full evidence map. The architecture preserves the distinction between observed institutional mechanisms, empirical findings, engineering proposals and unverified claims.
+GitHub remains the source of truth. External platforms consume versioned artifacts through adapters, APIs or CI jobs. Credentials remain outside source control, and execution environments are explicitly bounded.
+
+## Status boundary
+
+This release is a substantially integrated **research + execution-control foundation**, not a claim of trading profitability or a fully autonomous production trading desk. Production-quality live trading requires a separate reviewed authorization and additional operational controls beyond the demo boundary.
+
+## Build baseline
+
+Integrated hardening baseline: 2026-09-17. Exact synchronized branch validation: **165 Python tests passed; Next.js lint and production build passed on commit `3566c92eb034b2fd2bd929d87641e1fe97d5469f`.** Vercel deployment remains an external deployment-system check; the current cockpit tree itself is validated by GitHub CI.
