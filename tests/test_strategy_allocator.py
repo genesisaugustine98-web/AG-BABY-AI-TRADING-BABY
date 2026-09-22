@@ -33,7 +33,7 @@ def test_allocator_applies_declared_risk_budgets():
     result = StrategyAllocator(
         AllocationLimits(
             max_total_risk=Decimal("0.012"),
-            max_per_strategy_risk=Decimal("0.010"),
+            max_per_strategy_risk=Decimal("0.012"),
             max_per_instrument_risk=Decimal("0.010"),
             max_candidates=8,
         )
