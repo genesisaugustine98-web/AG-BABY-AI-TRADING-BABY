@@ -252,7 +252,7 @@ class TradingNode:
                         event_id=self._event_id(f"quote:{self._cycle_number}:{symbol}"),
                         occurred_at_ms=now_ms,
                         source="trading_node",
-                        source_version="node-v2",
+                        source_version=f"node-v2:{self.config_fingerprint}",
                         symbol=symbol,
                         bid=str(quote.bid),
                         ask=str(quote.ask),
@@ -301,7 +301,7 @@ class TradingNode:
                         event_id=self._event_id(f"opportunity:{self._cycle_number}:{symbol}"),
                         occurred_at_ms=now_ms,
                         source=decision.strategy_id,
-                        source_version="controller-v2",
+                        source_version=f"controller-v2:{self.config_fingerprint}",
                         candidate=decision.candidate,
                     )
                 )
