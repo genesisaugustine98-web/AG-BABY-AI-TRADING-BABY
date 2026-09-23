@@ -139,3 +139,44 @@ def test_exact_portfolio_gate_runs_after_sizing_and_before_execution():
     events = [e for e in node.events.history() if type(e).__name__ == "PortfolioRiskDecisionEvent"]
     assert events and events[0].approved is False
     assert events[0].reasons == ("PORTFOLIO_TEST_DENY",)
+
+
+def test_execution_guard_is_last_moment_fail_closed_boundary():
+    execution = Execution()
+    context = AllowingContext()
+
+    def guard():
+        raise RuntimeError("LEASE_LOST")
+
+    node = TradingNode(
+        config=RuntimeConfig(allow_execution=True),
+        market_data=Feed(),
+        controllers=(Controller(),),
+        context_factory=context,
+        execution=execution,
+        market_state_factory=lambda *, quote, now_ms: MarketState(
+            EventState.NORMAL, 100, Decimal("0.0001"), Decimal("0.9"),
+            Decimal("0.1"), Decimal("0.95"), Decimal("0.99")
+        ),
+        allocator=StrategyAllocator(
+            AllocationLimits(
+                max_total_risk=Decimal("0.01"),
+                max_per_strategy_risk=Decimal("0.01"),
+                max_per_instrument_risk=Decimal("0.01"),
+                max_candidates=8,
+            )
+        ),
+        execution_guard=guard,
+        strategy_order=("tsmom",),
+        event_bus=EventBus(),
+        clock=Clock(),
+    )
+    node.start()
+    try:
+        node.cycle()
+    except RuntimeError as exc:
+        assert str(exc) == "LEASE_LOST"
+    else:
+        raise AssertionError("execution guard must stop submission")
+    assert not execution.calls
+    assert node.state.value == "FROZEN"
