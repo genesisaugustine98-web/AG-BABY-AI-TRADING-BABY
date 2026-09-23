@@ -25,11 +25,11 @@ class OpportunityCandidate:
     executable_edge: Decimal
     suggested_risk: Decimal
     state: str
-    strategy_id: str
     model_id: str
     model_version: str
     evidence_ids: tuple[str, ...]
     reason: str
+    strategy_id: str = "unspecified_strategy"
 
 
 def build_candidate(
