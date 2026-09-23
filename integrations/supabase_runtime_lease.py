@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import ssl
-import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -109,8 +108,6 @@ class SupabaseRuntimeLease:
         return released
 
     def _rpc(self, function_name: str, body: dict[str, object]):
-        qs = urllib.parse.urlencode({})
-        del qs
         url = f"{self.base_url}/rest/v1/rpc/{function_name}"
         data = json.dumps(body, separators=(",", ":")).encode()
         headers = {
