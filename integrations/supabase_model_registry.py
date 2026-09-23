@@ -71,6 +71,16 @@ class SupabaseModelRegistry:
             "metrics": {"decision": decision.decision},
         }, prefer="return=minimal")
 
+    def latest_surveillance(self, *, model_id: str, version: str, limit: int = 100) -> tuple[dict[str, Any], ...]:
+        if limit < 1 or limit > 500:
+            raise ValueError("surveillance limit must be between 1 and 500")
+        rows = self._request("GET", "model_surveillance_events", query={
+            "model_id": f"eq.{model_id}", "version": f"eq.{version}",
+            "select": "event_id,observed_at,decision,breach_count,reasons",
+            "order": "observed_at.desc", "limit": str(limit),
+        }) or []
+        return tuple(rows)
+
     def retire(self, *, model_id: str, version: str, reason: str) -> None:
         status=self.get_status(model_id=model_id, version=version)
         if status == "retired": return

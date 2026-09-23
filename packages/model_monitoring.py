@@ -164,6 +164,12 @@ class ModelSurveillanceEngine:
             None if rolling_net_bps is None else Decimal(str(rolling_net_bps)),
             None if drawdown_fraction is None else Decimal(str(drawdown_fraction)))
 
+    def seed_state(self, *, model_id: str, version: str, consecutive_breaches: int, last_decision: str = "RETAIN") -> None:
+        model_id = str(model_id).strip(); version = str(version).strip()
+        if not model_id or not version or consecutive_breaches < 0:
+            raise ValueError("invalid surveillance seed")
+        self._state[(model_id, version)] = ModelSurveillanceState(model_id, version, int(consecutive_breaches), last_decision)
+
     def state(self, *, model_id: str, version: str) -> ModelSurveillanceState:
         key=(str(model_id).strip(),str(version).strip())
         return self._state.get(key, ModelSurveillanceState(key[0],key[1],0))
