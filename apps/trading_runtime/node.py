@@ -73,6 +73,10 @@ class CandidateAllocator(Protocol):
         ...
 
 
+class ExecutionGuard(Protocol):
+    def __call__(self) -> None: ...
+
+
 class PortfolioRiskGate(Protocol):
     def __call__(
         self,
@@ -166,6 +170,7 @@ class TradingNode:
         allocator: CandidateAllocator | None = None,
         strategy_order: tuple[str, ...] = (),
         portfolio_risk_gate: PortfolioRiskGate | None = None,
+        execution_guard: ExecutionGuard | None = None,
         clock: Clock | None = None,
         event_bus: EventBus | None = None,
         supervisor: RuntimeSupervisor | None = None,
@@ -183,6 +188,7 @@ class TradingNode:
         self.allocator = allocator
         self.strategy_order = strategy_order or tuple(c.strategy_id for c in controllers)
         self.portfolio_risk_gate = portfolio_risk_gate
+        self.execution_guard = execution_guard
         self.clock = clock or SystemClock()
         self.events = event_bus or EventBus()
         self.supervisor = supervisor or RuntimeSupervisor(
@@ -365,6 +371,8 @@ class TradingNode:
                 continue
             if self.execution is None:
                 raise RuntimeError("execution sink missing")
+            if self.execution_guard is not None:
+                self.execution_guard()
             instrument = self.market_data.instrument_spec(candidate.instrument)
             built = self.context_factory(
                 decision=decision,
