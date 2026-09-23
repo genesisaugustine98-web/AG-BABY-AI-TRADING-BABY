@@ -4,7 +4,8 @@ from packages.opportunity import OpportunityCandidate
 from packages.strategy_allocator import AllocationLimits, StrategyAllocator
 
 
-def candidate(candidate_id, model_id, instrument, risk):
+def candidate(candidate_id, strategy_id, instrument, risk, model_id=None):
+    model_id = model_id or strategy_id
     return OpportunityCandidate(
         candidate_id,
         instrument,
@@ -21,6 +22,7 @@ def candidate(candidate_id, model_id, instrument, risk):
         "1",
         (),
         "executable",
+        strategy_id,
     )
 
 
