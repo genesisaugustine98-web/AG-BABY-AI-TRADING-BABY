@@ -92,6 +92,7 @@ class CanonicalConfig:
     risk_max_open_positions: int = 8
     risk_min_broker_health: Decimal = Decimal("0.80")
     risk_min_data_health: Decimal = Decimal("0.80")
+    emergency_freeze_path: str = "runtime/EMERGENCY_FREEZE"
     max_candidates: int = 8
     tsmom_lookback_bars: int = 24
     tsmom_horizon_bars: int = 6
@@ -150,6 +151,7 @@ class CanonicalConfig:
             risk_max_open_positions=_int_env("AG_RISK_MAX_OPEN_POSITIONS", 8),
             risk_min_broker_health=_decimal_env("AG_RISK_MIN_BROKER_HEALTH", Decimal("0.80")),
             risk_min_data_health=_decimal_env("AG_RISK_MIN_DATA_HEALTH", Decimal("0.80")),
+            emergency_freeze_path=os.environ.get("AG_EMERGENCY_FREEZE_PATH", "runtime/EMERGENCY_FREEZE"),
             max_candidates=_int_env("AG_MAX_CANDIDATES", 8),
             tsmom_lookback_bars=_int_env("AG_TSMOM_LOOKBACK", 24),
             tsmom_horizon_bars=_int_env("AG_TSMOM_HORIZON", 6),
@@ -600,6 +602,7 @@ class CanonicalTradingSystem:
                     safety_margin_fraction=config.safety_margin_fraction,
                     allow_execution=config.allow_execution,
                     config_fingerprint=config_fingerprint(config),
+                    emergency_freeze_path=config.emergency_freeze_path,
                 ),
                 market_data=feed,
                 controllers=tuple(controllers),
