@@ -14,6 +14,7 @@ import json
 import os
 from dataclasses import dataclass
 from decimal import Decimal
+from math import sqrt
 from typing import Any
 
 from apps.execution_gateway.runtime import DemoExecutionRuntime
@@ -24,9 +25,10 @@ from packages.circuit_breaker import CircuitBreakerLimits, ExecutionCircuitBreak
 from packages.config_identity import config_fingerprint
 from packages.models import AdmissionContext, EventState, InstrumentSpec, MarketState, PortfolioState, TradeIntent
 from packages.portfolio_engine import PortfolioEngine, PositionSnapshot
+from packages.portfolio_risk import Exposure, PortfolioRiskEngine, PortfolioRiskLimits, PortfolioRiskDecision
 from packages.risk import size_for_cash_risk
 from packages.strategy_allocator import AllocationLimits
-from packages.institutional_risk import InstitutionalAllocationLimits, InstitutionalStrategyAllocator, correlations_from_env_payload
+from packages.institutional_risk import InstitutionalAllocationLimits, InstitutionalStrategyAllocator, betas_from_env_payload, correlations_from_env_payload
 from packages.strategy_controller import TSMOMController
 from packages.tsmom_forecast import PriceBar, TSMOMForecastModel, TSMOMValidation, dataset_fingerprint
 from packages.runtime_supervisor import RuntimeState
@@ -105,6 +107,12 @@ class CanonicalConfig:
     metrics_port: int = 9300
     max_execution_unknown_outcomes: int = 1
     max_execution_rejections: int = 5
+    portfolio_max_gross_notional_fraction: Decimal = Decimal("0.75")
+    portfolio_max_net_notional_fraction: Decimal = Decimal("0.35")
+    portfolio_max_margin_fraction: Decimal = Decimal("0.45")
+    portfolio_max_volatility: Decimal = Decimal("0.20")
+    portfolio_max_beta_exposure: Decimal = Decimal("0.25")
+    portfolio_betas_json: str = "{}"
 
     @classmethod
     def from_env(cls) -> "CanonicalConfig":
@@ -149,6 +157,12 @@ class CanonicalConfig:
             metrics_port=_int_env("AG_METRICS_PORT", 9300),
             max_execution_unknown_outcomes=_int_env("AG_MAX_EXECUTION_UNKNOWN", 1),
             max_execution_rejections=_int_env("AG_MAX_EXECUTION_REJECTIONS", 5),
+            portfolio_max_gross_notional_fraction=_decimal_env("AG_MAX_GROSS_NOTIONAL", Decimal("0.75")),
+            portfolio_max_net_notional_fraction=_decimal_env("AG_MAX_NET_NOTIONAL", Decimal("0.35")),
+            portfolio_max_margin_fraction=_decimal_env("AG_MAX_MARGIN_FRACTION", Decimal("0.45")),
+            portfolio_max_volatility=_decimal_env("AG_MAX_PORTFOLIO_VOL", Decimal("0.20")),
+            portfolio_max_beta_exposure=_decimal_env("AG_MAX_PORTFOLIO_BETA", Decimal("0.25")),
+            portfolio_betas_json=os.environ.get("AG_PORTFOLIO_BETAS", "{}"),
         )
         config.validate()
         return config
@@ -177,6 +191,11 @@ class CanonicalConfig:
             ("governance_max_drawdown", self.governance_max_drawdown),
             ("portfolio_max_correlation_adjusted_risk", self.portfolio_max_correlation_adjusted_risk),
             ("portfolio_max_abs_net_risk", self.portfolio_max_abs_net_risk),
+            ("portfolio_max_gross_notional_fraction", self.portfolio_max_gross_notional_fraction),
+            ("portfolio_max_net_notional_fraction", self.portfolio_max_net_notional_fraction),
+            ("portfolio_max_margin_fraction", self.portfolio_max_margin_fraction),
+            ("portfolio_max_volatility", self.portfolio_max_volatility),
+            ("portfolio_max_beta_exposure", self.portfolio_max_beta_exposure),
         ):
             if value < 0 or value > Decimal("1"):
                 raise ValueError(f"{name} must be in [0,1]")
@@ -316,6 +335,114 @@ class CanonicalIntentFactory:
         return intent, context
 
 
+class CanonicalPortfolioRiskGate:
+    """Exact post-sizing portfolio risk gate using broker-valued positions and realized volatility."""
+
+    def __init__(
+        self,
+        portfolio: PortfolioEngine,
+        market_data: MT5RuntimeAdapter,
+        config: CanonicalConfig,
+    ) -> None:
+        self.portfolio = portfolio
+        self.market_data = market_data
+        self.config = config
+        self.correlations = correlations_from_env_payload(config.portfolio_correlations_json)
+        self.betas = betas_from_env_payload(config.portfolio_betas_json)
+        self.engine = PortfolioRiskEngine(
+            PortfolioRiskLimits(
+                max_gross_notional_fraction=config.portfolio_max_gross_notional_fraction,
+                max_abs_net_notional_fraction=config.portfolio_max_net_notional_fraction,
+                max_margin_fraction=config.portfolio_max_margin_fraction,
+                max_portfolio_volatility=config.portfolio_max_volatility,
+                max_abs_beta_exposure=config.portfolio_max_beta_exposure,
+                require_complete_correlation=config.portfolio_require_complete_correlations,
+            )
+        )
+
+    def __call__(
+        self,
+        *,
+        candidate,
+        intent,
+        quote,
+        market,
+        instrument,
+        now_ms: int,
+    ) -> PortfolioRiskDecision:
+        exposures: list[Exposure] = []
+        for position in self.portfolio.position_snapshots():
+            if position.net_quantity == 0:
+                continue
+            spec = self.market_data.instrument_spec(position.instrument)
+            position_quote = self.market_data.quote(position.instrument, now_ms=now_ms)
+            bars = self.market_data.completed_bars(
+                symbol=position.instrument,
+                timeframe=self.config.timeframe,
+                count=self.config.bars_per_symbol,
+            )
+            notional = self._usd_notional(
+                quantity=position.net_quantity,
+                quote=position_quote,
+                spec=spec,
+            )
+            exposures.append(
+                Exposure(
+                    position.instrument,
+                    notional,
+                    self._realized_volatility(bars),
+                    self.betas.get(position.instrument.upper(), Decimal("0")),
+                )
+            )
+
+        candidate_notional = self._usd_notional(
+            quantity=intent.quantity if intent.side.upper() == "BUY" else -intent.quantity,
+            quote=quote,
+            spec=instrument,
+        )
+        exposures.append(
+            Exposure(
+                intent.symbol,
+                candidate_notional,
+                self._realized_volatility(
+                    self.market_data.completed_bars(
+                        symbol=intent.symbol,
+                        timeframe=self.config.timeframe,
+                        count=self.config.bars_per_symbol,
+                    )
+                ),
+                self.betas.get(intent.symbol.upper(), Decimal("0")),
+            )
+        )
+
+        return self.engine.evaluate(
+            exposures=tuple(exposures),
+            account_equity=self.portfolio.snapshot(captured_at_ms=now_ms).equity,
+            margin_fraction=self.portfolio.margin_fraction(),
+            correlation=self.correlations,
+        )
+
+    @staticmethod
+    def _usd_notional(*, quantity: Decimal, quote, spec: InstrumentSpec) -> Decimal:
+        base = spec.base_ccy.upper()
+        quote_ccy = spec.quote_ccy.upper()
+        if quote_ccy == "USD":
+            return quantity * spec.contract_size * quote.mid
+        if base == "USD":
+            return quantity * spec.contract_size
+        raise RuntimeError(f"portfolio USD valuation unavailable:{spec.symbol}:{base}/{quote_ccy}")
+
+    def _realized_volatility(self, bars) -> Decimal:
+        closes = [Decimal(str(getattr(bar, "close"))) for bar in bars if Decimal(str(getattr(bar, "close"))) > 0]
+        if len(closes) < 20:
+            raise RuntimeError("insufficient bars for portfolio volatility")
+        returns = [closes[i] / closes[i - 1] - Decimal("1") for i in range(1, len(closes))]
+        mean = sum(returns, Decimal("0")) / Decimal(len(returns))
+        variance = sum((value - mean) ** 2 for value in returns) / Decimal(max(1, len(returns) - 1))
+        annualization = Decimal(str(sqrt((86_400 / self.config.bar_interval_seconds) * 252)))
+        return max(Decimal("0.000001"), variance.sqrt() * annualization)
+
+
 class CanonicalTradingSystem:
     def __init__(
         self,
@@ -438,6 +565,7 @@ class CanonicalTradingSystem:
                 market_state_factory=CanonicalMarketStateFactory(runtime),
                 allocator=allocator,
                 strategy_order=tuple(c.strategy_id for c in controllers),
+                portfolio_risk_gate=CanonicalPortfolioRiskGate(portfolio, feed, config),
                 event_bus=event_bus,
             )
 
@@ -604,6 +732,7 @@ def _refresh_portfolio(runtime: DemoExecutionRuntime, portfolio: PortfolioEngine
         captured_at_ms=captured_at_ms,
         balance=balance,
         equity=equity,
+        margin=Decimal(str(account.get("margin", "0"))),
     )
     snapshot = runtime.gateway.snapshot()
     positions = tuple(
