@@ -21,6 +21,7 @@ from apps.execution_gateway.runtime import DemoExecutionRuntime
 from packages.event_bus import EventBus
 from packages.events import FreezeEvent, OrderLifecycleEvent, RuntimeManifestEvent
 from packages.model_governance import ModelEvidence, ModelGovernance, ModelState
+from packages.research_promotion_gate import ResearchPromotionRequirements, evaluate_research_package
 from packages.circuit_breaker import CircuitBreakerLimits, ExecutionCircuitBreaker
 from packages.config_identity import config_fingerprint
 from packages.models import AdmissionContext, EventState, InstrumentSpec, MarketState, PortfolioState, TradeIntent
@@ -119,6 +120,9 @@ class CanonicalConfig:
     portfolio_max_volatility: Decimal = Decimal("0.20")
     portfolio_max_beta_exposure: Decimal = Decimal("0.25")
     portfolio_betas_json: str = "{}"
+    research_min_validation_periods: int = 3
+    research_min_cost_stress_points: int = 2
+    research_min_slippage_stress_points: int = 2
 
     @classmethod
     def from_env(cls) -> "CanonicalConfig":
@@ -174,6 +178,9 @@ class CanonicalConfig:
             portfolio_max_volatility=_decimal_env("AG_MAX_PORTFOLIO_VOL", Decimal("0.20")),
             portfolio_max_beta_exposure=_decimal_env("AG_MAX_PORTFOLIO_BETA", Decimal("0.25")),
             portfolio_betas_json=os.environ.get("AG_PORTFOLIO_BETAS", "{}"),
+            research_min_validation_periods=_int_env("AG_RESEARCH_MIN_VALIDATION_PERIODS", 3),
+            research_min_cost_stress_points=_int_env("AG_RESEARCH_MIN_COST_STRESS_POINTS", 2),
+            research_min_slippage_stress_points=_int_env("AG_RESEARCH_MIN_SLIPPAGE_STRESS_POINTS", 2),
         )
         config.validate()
         return config
@@ -238,6 +245,8 @@ class CanonicalConfig:
                 raise ValueError("metrics_port must be between 1024 and 65535")
         if self.max_execution_unknown_outcomes < 1 or self.max_execution_rejections < 1:
             raise ValueError("execution circuit breaker thresholds must be >= 1")
+        if self.research_min_validation_periods < 1 or self.research_min_cost_stress_points < 1 or self.research_min_slippage_stress_points < 1:
+            raise ValueError("research evidence thresholds must be >= 1")
 
 
 class CanonicalMarketStateFactory:
@@ -822,7 +831,18 @@ def _require_demo_governance(config: CanonicalConfig, validation: TSMOMValidatio
     if not isinstance(supplied, dict):
         raise RuntimeError("AG_MODEL_EVIDENCE_JSON must be an object")
 
-    def flag(name: str) -> bool:
+    research_decision = evaluate_research_package(
+        supplied,
+        requirements=ResearchPromotionRequirements(
+            min_independent_validation_periods=config.research_min_validation_periods,
+            min_cost_stress_points=config.research_min_cost_stress_points,
+            min_slippage_stress_points=config.research_min_slippage_stress_points,
+        ),
+    )
+    if not research_decision.allowed:
+        raise RuntimeError("RESEARCH_PROMOTION_BLOCKED:" + "|".join(research_decision.reasons))
+
+    def flag(name: str):
         return bool(supplied.get(name, False))
 
     evidence = ModelEvidence(
