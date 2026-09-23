@@ -221,8 +221,8 @@ class CanonicalConfig:
             ("portfolio_max_volatility", self.portfolio_max_volatility),
             ("portfolio_max_beta_exposure", self.portfolio_max_beta_exposure),
         ):
-            if value < 0 or value > Decimal("1"):
-                raise ValueError(f"{name} must be in [0,1]")
+            if not value.is_finite() or value < 0 or value > Decimal("1"):
+                raise ValueError(f"{name} must be a finite fraction in [0,1]")
         if self.target_multiple <= 0 or self.max_candidates < 1 or self.risk_max_open_positions < 1:
             raise ValueError("target_multiple, max_candidates and risk_max_open_positions must be positive")
         if self.max_order_risk > self.max_per_strategy_risk:
@@ -730,7 +730,7 @@ class CanonicalTradingSystem:
                         event_id=self.node._event_id(f"canonical-freeze:{self.node._cycle_number + 1}"),
                         occurred_at_ms=self.node.clock.now_ms(),
                         source=self.config.node_id,
-                        source_version="canonical-v1",
+                        source_version=f"canonical-v1:{self.node.config_fingerprint}",
                         environment=self.config.environment,
                         reason=reason,
                     )
