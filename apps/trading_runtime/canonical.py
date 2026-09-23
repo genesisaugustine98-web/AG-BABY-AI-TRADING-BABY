@@ -29,6 +29,7 @@ from packages.strategy_controller import TSMOMController
 from packages.tsmom_forecast import PriceBar, TSMOMForecastModel, TSMOMValidation, dataset_fingerprint
 from packages.runtime_supervisor import RuntimeState
 from integrations.runtime_event_store import RuntimeEventStore, attach_runtime_event_store
+from integrations.supabase_runtime_lease import SupabaseRuntimeLease, LeaseLost
 
 from .mt5_runtime import MT5RuntimeAdapter
 from .node import RuntimeConfig, TradingNode
@@ -92,6 +93,9 @@ class CanonicalConfig:
     portfolio_max_abs_net_risk: Decimal = Decimal("0.03")
     portfolio_require_complete_correlations: bool = True
     portfolio_correlations_json: str = "{}"
+    distributed_lease: bool = False
+    lease_name: str = ""
+    lease_ttl_seconds: int = 30
 
     @classmethod
     def from_env(cls) -> "CanonicalConfig":
@@ -128,6 +132,9 @@ class CanonicalConfig:
             portfolio_max_abs_net_risk=_decimal_env("AG_MAX_ABS_NET_RISK", Decimal("0.03")),
             portfolio_require_complete_correlations=_bool_env("AG_REQUIRE_COMPLETE_CORRELATIONS", True),
             portfolio_correlations_json=os.environ.get("AG_PORTFOLIO_CORRELATIONS", "{}"),
+            distributed_lease=_bool_env("AG_DISTRIBUTED_LEASE", False),
+            lease_name=os.environ.get("AG_LEASE_NAME", "").strip(),
+            lease_ttl_seconds=_int_env("AG_LEASE_TTL_SECONDS", 30),
         )
         config.validate()
         return config
@@ -163,6 +170,11 @@ class CanonicalConfig:
             raise ValueError("target_multiple and max_candidates must be positive")
         if self.tsmom_lookback_bars < 2 or self.tsmom_horizon_bars < 1 or self.tsmom_min_training_samples < 10:
             raise ValueError("invalid TSMOM configuration")
+        if self.distributed_lease:
+            if not self.lease_name:
+                raise ValueError("AG_LEASE_NAME is required when distributed lease is enabled")
+            if self.lease_ttl_seconds < 5 or self.lease_ttl_seconds > 300:
+                raise ValueError("lease_ttl_seconds must be between 5 and 300")
 
 
 class CanonicalMarketStateFactory:
@@ -295,6 +307,7 @@ class CanonicalTradingSystem:
         self.lock = lock
         self.event_bus = event_bus
         self._closed = False
+        self._lease: SupabaseRuntimeLease | None = None
 
     @classmethod
     def create(cls, config: CanonicalConfig) -> "CanonicalTradingSystem":
@@ -302,7 +315,16 @@ class CanonicalTradingSystem:
         lock = SingletonLock(config.lock_path)
         lock.acquire()
         runtime: DemoExecutionRuntime | None = None
+        lease: SupabaseRuntimeLease | None = None
         try:
+            if config.distributed_lease:
+                lease = SupabaseRuntimeLease(
+                    environment=config.environment,
+                    lease_name=config.lease_name,
+                    owner_id=config.node_id,
+                    ttl_seconds=config.lease_ttl_seconds,
+                )
+                lease.acquire()
             runtime = DemoExecutionRuntime.create()
             event_bus = EventBus(history_limit=2000)
             store = RuntimeEventStore(
@@ -372,7 +394,7 @@ class CanonicalTradingSystem:
                 strategy_order=tuple(c.strategy_id for c in controllers),
                 event_bus=event_bus,
             )
-            return cls(
+            system = cls(
                 config=config,
                 runtime=runtime,
                 node=node,
@@ -380,10 +402,17 @@ class CanonicalTradingSystem:
                 lock=lock,
                 event_bus=event_bus,
             )
+            system._lease = lease
+            return system
         except Exception:
             if runtime is not None:
                 try:
                     runtime.close()
+                except Exception:
+                    pass
+            if lease is not None:
+                try:
+                    lease.release()
                 except Exception:
                     pass
             lock.release()
@@ -393,6 +422,7 @@ class CanonicalTradingSystem:
         if self._closed:
             raise RuntimeError("canonical runtime is closed")
         if self.node.state in {RuntimeState.CREATED, RuntimeState.STOPPED}:
+            self._renew_lease_or_fail()
             self._reconcile_and_refresh()
             self.node.start()
 
@@ -403,6 +433,7 @@ class CanonicalTradingSystem:
         count = 0
         try:
             while self.node.state == RuntimeState.RUNNING:
+                self._renew_lease_or_fail()
                 self._reconcile_and_refresh()
                 self.node.cycle()
                 count += 1
@@ -441,6 +472,17 @@ class CanonicalTradingSystem:
             self.node.stop()
             self.close()
 
+    def _renew_lease_or_fail(self) -> None:
+        if self._lease is None:
+            return
+        try:
+            self._lease.renew()
+        except LeaseLost as exc:
+            reason = "RUNTIME_LEASE_LOST"
+            self.node.supervisor.freeze(reason)
+            self.runtime.safety.set_frozen(True, reason=reason)
+            raise RuntimeError(reason) from exc
+
     def _reconcile_and_refresh(self) -> None:
         result = self.runtime.reconciliation.reconcile_once()
         if result.freeze_required or not self.runtime.reconciliation.trading_permitted:
@@ -454,8 +496,12 @@ class CanonicalTradingSystem:
         try:
             self.runtime.close()
         finally:
-            self.lock.release()
-            self._closed = True
+            try:
+                if self._lease is not None:
+                    self._lease.release()
+            finally:
+                self.lock.release()
+                self._closed = True
 
 
 def _refresh_portfolio(runtime: DemoExecutionRuntime, portfolio: PortfolioEngine) -> None:
