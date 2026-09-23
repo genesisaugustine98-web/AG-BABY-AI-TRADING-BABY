@@ -1,0 +1,6 @@
+# Runtime dependency for the Windows MT5 execution node.
+# The rest of the execution/control-plane integrations use Python's standard library.
+MetaTrader5==5.0.6180
+
+certifi==2026.7.22
+tzdata==2026.4

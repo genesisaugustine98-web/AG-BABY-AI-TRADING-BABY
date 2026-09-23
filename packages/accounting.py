@@ -1,7 +1,9 @@
-"""Broker-confirmed fill accounting and deterministic position reduction.
+"""Compatibility facade for the canonical fill-accounting engine.
 
-Only broker-confirmed fills are admissible. Submission acknowledgements, theoretical
-fills, and unresolved UNKNOWN outcomes must never create account state.
+New code should import from ``packages.fill_accounting``. This module deliberately
+keeps the historical API used by older tests/integrations while delegating all position
+math and fill validation to the canonical deterministic engine, preventing two separate
+accounting implementations from diverging.
 """
 from __future__ import annotations
 
@@ -11,6 +13,8 @@ from decimal import Decimal
 from typing import Iterable
 
 from .execution_ledger import AppendOnlyLedger, LedgerEvent
+from .fill_accounting import BrokerConfirmedFill as CanonicalFill
+from .fill_accounting import FillAccountingEngine, PositionState as CanonicalPosition, apply_fill
 
 
 @dataclass(frozen=True)
@@ -25,6 +29,38 @@ class BrokerConfirmedFill:
     occurred_at: datetime
     broker: str
     confirmed: bool = True
+
+    def _canonical(self) -> CanonicalFill:
+        return CanonicalFill(
+            fill_id=self.fill_id,
+            order_id=self.client_order_id,
+            instrument=self.instrument,
+            side=self.side,
+            quantity=self.quantity,
+            price=self.price,
+            filled_at=self.occurred_at.isoformat(),
+            broker_fill_id=self.fill_id,
+            broker_order_id=self.broker_order_id,
+            venue=self.broker,
+            metadata={"legacy_api": True, "client_order_id": self.client_order_id},
+        ) if self.confirmed else self._unconfirmed_placeholder()
+
+    def _unconfirmed_placeholder(self) -> CanonicalFill:
+        # Canonical construction is still strict; validation below handles the
+        # historical confirmed=False semantic before any accounting occurs.
+        return CanonicalFill(
+            fill_id=self.fill_id,
+            order_id=self.client_order_id,
+            instrument=self.instrument,
+            side=self.side,
+            quantity=self.quantity,
+            price=self.price,
+            filled_at=self.occurred_at.isoformat(),
+            broker_fill_id=self.fill_id,
+            broker_order_id=self.broker_order_id,
+            venue=self.broker,
+            metadata={"legacy_api": True, "client_order_id": self.client_order_id},
+        )
 
     def signed_quantity(self) -> Decimal:
         side = self.side.upper()
@@ -50,6 +86,7 @@ class BrokerConfirmedFill:
         if not self.confirmed:
             raise ValueError("unconfirmed fill cannot enter accounting")
         self.signed_quantity()
+        self._canonical()
 
 
 @dataclass(frozen=True)
@@ -67,79 +104,61 @@ class PositionState:
     realized_pnl: Decimal = Decimal("0")
 
 
+def _to_legacy(state: CanonicalPosition) -> PositionState:
+    return PositionState(
+        instrument=state.instrument,
+        net_quantity=state.net_quantity,
+        average_price=state.average_price if state.average_price is not None else Decimal("0"),
+        realized_pnl=state.realized_pnl,
+    )
+
+
 @dataclass
 class PositionBook:
-    """Reduce confirmed fills into positions using exact Decimal arithmetic."""
-
+    """Legacy API that delegates position math to ``packages.fill_accounting``."""
     positions: dict[str, PositionState] = field(default_factory=dict)
 
     def apply(self, fill: BrokerConfirmedFill) -> PositionState:
         fill.validate()
         current = self.positions.get(fill.instrument, PositionState(fill.instrument))
-        delta = fill.signed_quantity()
-        qty = current.net_quantity
-
-        if qty == 0:
-            updated = PositionState(fill.instrument, delta, fill.price, current.realized_pnl)
-            self.positions[fill.instrument] = updated
-            return updated
-
-        same_direction = (qty > 0 and delta > 0) or (qty < 0 and delta < 0)
-        if same_direction:
-            total_abs = abs(qty) + abs(delta)
-            avg = ((abs(qty) * current.average_price) + (abs(delta) * fill.price)) / total_abs
-            updated = PositionState(fill.instrument, qty + delta, avg, current.realized_pnl)
-            self.positions[fill.instrument] = updated
-            return updated
-
-        closing = min(abs(qty), abs(delta))
-        pnl = closing * (fill.price - current.average_price) * (Decimal("1") if qty > 0 else Decimal("-1"))
-        remaining = qty + delta
-        realized = current.realized_pnl + pnl
-
-        if remaining == 0:
-            updated = PositionState(fill.instrument, Decimal("0"), Decimal("0"), realized)
-        elif (qty > 0 and remaining > 0) or (qty < 0 and remaining < 0):
-            updated = PositionState(fill.instrument, remaining, current.average_price, realized)
-        else:
-            updated = PositionState(fill.instrument, remaining, fill.price, realized)
-
-        self.positions[fill.instrument] = updated
-        return updated
+        canonical_current = CanonicalPosition(
+            instrument=current.instrument,
+            net_quantity=current.net_quantity,
+            average_price=current.average_price if current.net_quantity != 0 else None,
+            realized_pnl=current.realized_pnl,
+        )
+        updated = apply_fill(canonical_current, fill._canonical())
+        legacy = _to_legacy(updated)
+        self.positions[fill.instrument] = legacy
+        return legacy
 
 
 @dataclass
 class ConfirmedFillProcessor:
-    """Idempotently ledger confirmed fills, then reduce them into account state."""
-
+    """Legacy processor backed by the canonical deterministic accounting engine."""
     ledger: AppendOnlyLedger
     positions: PositionBook = field(default_factory=PositionBook)
     seen_fill_ids: set[str] = field(default_factory=set)
+    _fills: dict[str, CanonicalFill] = field(default_factory=dict, repr=False)
 
     def process(self, fill: BrokerConfirmedFill) -> FillAccountResult:
         fill.validate()
-        if fill.fill_id in self.seen_fill_ids:
-            return FillAccountResult(None, True, self.positions.positions[fill.instrument])
+        canonical = fill._canonical()
+        existing = self._fills.get(fill.fill_id)
+        if existing is not None:
+            if existing.fingerprint != canonical.fingerprint:
+                raise ValueError(f"fill_id_conflict:{fill.fill_id}")
+            current = self.positions.positions[fill.instrument]
+            return FillAccountResult(None, True, current)
 
-        payload = {
-            "fill_id": fill.fill_id,
-            "broker_order_id": fill.broker_order_id,
-            "client_order_id": fill.client_order_id,
-            "instrument": fill.instrument,
-            "side": fill.side.upper(),
-            "quantity": str(fill.quantity),
-            "price": str(fill.price),
-            "occurred_at": fill.occurred_at.isoformat(),
-            "broker": fill.broker,
-            "confirmed": fill.confirmed,
-        }
         event = self.ledger.append(
             event_id=f"FILL:{fill.fill_id}",
             event_type="BROKER_CONFIRMED_FILL",
             correlation_id=fill.client_order_id,
-            payload=payload,
+            payload=canonical.canonical_payload(),
             occurred_at=fill.occurred_at,
         )
+        self._fills[fill.fill_id] = canonical
         position = self.positions.apply(fill)
         self.seen_fill_ids.add(fill.fill_id)
         return FillAccountResult(event, False, position)
@@ -149,7 +168,7 @@ class ConfirmedFillProcessor:
 
 
 def execution_tca(arrival_price: Decimal | None, fills: Iterable[BrokerConfirmedFill]) -> dict[str, Decimal | None]:
-    """Compute fill-only TCA; unavailable reference data remains UNKNOWN (None)."""
+    """Compatibility wrapper for the canonical fill set; unavailable reference stays UNKNOWN."""
     confirmed = list(fills)
     if not confirmed:
         return {"filled_quantity": Decimal("0"), "execution_vwap": None, "slippage_price": None}
@@ -159,8 +178,9 @@ def execution_tca(arrival_price: Decimal | None, fills: Iterable[BrokerConfirmed
     vwap = sum((fill.quantity * fill.price for fill in confirmed), Decimal("0")) / total_qty
     slippage = None
     if arrival_price is not None:
-        # Positive = worse for BUY, better for SELL; callers can sign-normalize by order side.
-        first_side = confirmed[0].side.upper()
-        direction = Decimal("1") if first_side == "BUY" else Decimal("-1")
-        slippage = (vwap - arrival_price) * direction
+        side = confirmed[0].side.upper()
+        slippage = (vwap - arrival_price) * (Decimal("1") if side == "BUY" else Decimal("-1"))
     return {"filled_quantity": total_qty, "execution_vwap": vwap, "slippage_price": slippage}
+
+
+__all__ = ["BrokerConfirmedFill", "ConfirmedFillProcessor", "FillAccountResult", "PositionBook", "PositionState", "execution_tca"]

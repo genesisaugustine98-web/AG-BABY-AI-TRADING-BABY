@@ -1,0 +1,43 @@
+name: demo-recovery-drills
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: "Demo symbol for the non-filling pending-order drills"
+        required: true
+        default: "USDJPY"
+permissions:
+  contents: read
+jobs:
+  drills:
+    runs-on: [self-hosted, Windows, mt5-demo]
+    timeout-minutes: 30
+    env:
+      EXECUTION_ENV: demo
+      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+      MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+      MT5_SERVER: ${{ secrets.MT5_SERVER }}
+      MT5_DEMO_SERVER: ${{ secrets.MT5_DEMO_SERVER }}
+      MT5_TERMINAL_PATH: ${{ secrets.MT5_TERMINAL_PATH }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Cross-process UNKNOWN recovery
+        shell: pwsh
+        run: |
+          python scripts/run_demo_submit_recovery.py --phase submit --symbol "${{ github.event.inputs.symbol }}" --handoff artifacts/evidence/unknown-handoff.json
+          python scripts/run_demo_submit_recovery.py --phase recover --handoff artifacts/evidence/unknown-handoff.json
+      - name: Reconciliation drift and recovery
+        shell: pwsh
+        run: |
+          python scripts/run_demo_reconciliation_drift.py --symbol "${{ github.event.inputs.symbol }}" --output artifacts/evidence/reconciliation-drift.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-recovery-drills-${{ github.sha }}
+          path: artifacts/evidence/*.json
+          if-no-files-found: error

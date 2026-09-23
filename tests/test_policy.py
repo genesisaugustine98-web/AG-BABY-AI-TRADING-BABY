@@ -13,6 +13,35 @@ def base():
 
 def test_approve(): assert AdmissionPolicy().evaluate(base())[0] == Decision.APPROVE
 
+def test_future_quote_is_rejected():
+    c=replace(base(), market=MarketState(EventState.NORMAL,-1,Decimal('0.00001'),Decimal('0.90'),Decimal('0.10'),Decimal('0.95'),Decimal('0.99')))
+    decision, reasons = AdmissionPolicy().evaluate(c)
+    assert decision == Decision.DENY
+    assert 'NEGATIVE_QUOTE_AGE' in reasons
+
+
+def test_sell_uses_down_probability():
+    c = replace(
+        base(),
+        forecast=Forecast(
+            'm', '1', 999000, 3600, Decimal('-0.0040'), 'fraction',
+            Decimal('0.30'), Decimal('0.80'), Decimal('0.80')
+        ),
+    )
+    decision, reasons = AdmissionPolicy().evaluate(c)
+    assert decision == Decision.APPROVE
+    assert 'LOW_PROBABILITY' not in reasons
+
+
+def test_future_quote_is_rejected_by_quote_timestamp():
+    c = replace(
+        base(),
+        quote=Quote('EURUSD', Decimal('1.10000'), Decimal('1.10001'), 1_100_000, 'demo'),
+    )
+    decision, reasons = AdmissionPolicy().evaluate(c)
+    assert decision == Decision.DENY
+    assert 'FUTURE_QUOTE_TIMESTAMP' in reasons
+
 def test_stale():
     c=replace(base(), market=MarketState(EventState.NORMAL,5000,Decimal('0.00001'),Decimal('0.90'),Decimal('0.10'),Decimal('0.95'),Decimal('0.99')))
     assert AdmissionPolicy().evaluate(c)[0] == Decision.DENY
