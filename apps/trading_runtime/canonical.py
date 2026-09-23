@@ -31,6 +31,7 @@ from packages.tsmom_forecast import PriceBar, TSMOMForecastModel, TSMOMValidatio
 from packages.runtime_supervisor import RuntimeState
 from integrations.runtime_event_store import RuntimeEventStore, attach_runtime_event_store
 from integrations.supabase_runtime_lease import SupabaseRuntimeLease, LeaseLost
+from integrations.supabase_model_registry import SupabaseModelRegistry
 from .metrics_server import MetricsHTTPServer
 
 from .mt5_runtime import MT5RuntimeAdapter
@@ -360,6 +361,7 @@ class CanonicalTradingSystem:
                 timeout_seconds=config.event_store_timeout_seconds,
             )
             attach_runtime_event_store_critical(event_bus, store)
+            model_registry = SupabaseModelRegistry(timeout_seconds=config.event_store_timeout_seconds)
 
             portfolio = PortfolioEngine()
             _refresh_portfolio(runtime, portfolio)
@@ -384,8 +386,22 @@ class CanonicalTradingSystem:
                     dataset_fingerprint=dataset_fingerprint(bars),
                     code_commit_sha=os.environ.get("GIT_COMMIT_SHA", "runtime"),
                 )
+                model_registry.record_validation(
+                    model_id=validation.model_id,
+                    version=validation.version,
+                    validation=validation,
+                    status="candidate",
+                    governance_state=ModelState.CANDIDATE.value,
+                )
                 if config.allow_execution and config.require_model_governance:
                     _require_demo_governance(config, validation)
+                    model_registry.record_validation(
+                        model_id=validation.model_id,
+                        version=validation.version,
+                        validation=validation,
+                        status="validated",
+                        governance_state=ModelState.DEMO.value,
+                    )
                 controllers.append(TSMOMController(model=model, symbols=(symbol,)))
 
             feed = MT5RuntimeAdapter(runtime.gateway)
