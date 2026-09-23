@@ -10,6 +10,7 @@ from packages.models import AdmissionContext, InstrumentSpec, TradeIntent
 from .mt5_gateway import DemoOnlyMT5Gateway
 from .mt5_orders import DemoOnlyMT5OrderAdapter
 from .order_controls import ControlResult, DemoOrderControls, ReplaceRequest
+from .mt5_event_stream import MT5BrokerOrderEventStream
 from integrations.supabase_order_store import SupabaseOrderStore
 from integrations.supabase_execution_store import SupabaseExecutionStore as SafetyStore
 from apps.reconciliation.service import DurableReconciliationService
@@ -29,6 +30,7 @@ class DemoExecutionRuntime:
     safety: SafetyStore
     kernel: ExecutionKernel
     reconciliation: DurableReconciliationService
+    event_stream: MT5BrokerOrderEventStream | None = None
 
     @classmethod
     def create(cls, *, risk_limits: RiskLimits | None = None) -> "DemoExecutionRuntime":
@@ -54,7 +56,15 @@ class DemoExecutionRuntime:
                 risk_engine=DeterministicRiskEngine(risk_limits or RiskLimits()),
             ),
             reconciliation=reconciliation,
+            event_stream=MT5BrokerOrderEventStream(gateway.mt5_api(), checkpoint_store=safety),
         )
+
+    def poll_broker_events(self, *, now_msc: int) -> tuple:
+        stream = self.event_stream
+        if stream is None:
+            stream = MT5BrokerOrderEventStream(self.gateway.mt5_api(), checkpoint_store=self.safety)
+            self.event_stream = stream
+        return stream.poll(now_msc=now_msc)
 
     def submit(self, *, intent: TradeIntent, context: AdmissionContext, instrument: InstrumentSpec) -> ExecutionAttempt:
         from packages.demo_execution import deterministic_client_order_id
