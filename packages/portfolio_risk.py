@@ -85,25 +85,34 @@ class PortfolioRiskEngine:
         net = sum(x.notional for x in exposures)
         weights = [x.notional / account_equity for x in exposures]
 
+        # Full covariance matrix: diagonal variance plus both directions of each
+        # off-diagonal covariance. This avoids silently understating portfolio risk.
         variance = Decimal("0")
         for i, left in enumerate(exposures):
-            for j, right in enumerate(exposures):
+            variance += (
+                weights[i]
+                * weights[i]
+                * left.volatility
+                * left.volatility
+            )
+            for j in range(i + 1, len(exposures)):
+                right = exposures[j]
                 if (
-                    i < j
-                    and left.instrument != right.instrument
+                    left.instrument != right.instrument
                     and (left.instrument, right.instrument) not in correlation
                     and (right.instrument, left.instrument) not in correlation
                     and self.limits.require_complete_correlation
                 ):
                     reasons.append("PORTFOLIO_CORRELATION_INPUT_MISSING")
                 corr = self._corr(left.instrument, right.instrument, correlation)
-                variance += (
+                covariance = (
                     weights[i]
                     * weights[j]
                     * left.volatility
                     * right.volatility
                     * corr
                 )
+                variance += Decimal("2") * covariance
         portfolio_vol = max(Decimal("0"), variance).sqrt()
         beta = sum(
             (x.notional / account_equity) * x.beta for x in exposures
