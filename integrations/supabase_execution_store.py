@@ -100,23 +100,36 @@ class SupabaseExecutionStore:
         self._request("POST", "execution_account_snapshots", body=payload, prefer="return=minimal")
 
     def record_snapshot(self, snapshot: BrokerSnapshot) -> None:
-        payload = {
-            "orders": [{"broker_order_id": o.broker_order_id, "client_order_id": o.client_order_id, "instrument": o.instrument, "state": o.state, "filled_quantity": str(o.filled_quantity)} for o in snapshot.orders],
-            "positions": [{"instrument": p.instrument, "net_quantity": str(p.net_quantity)} for p in snapshot.positions],
-            "captured_at": snapshot.captured_at,
-        }
-        self._request("POST", "execution_events", body={
-            "event_id": self._event_id("broker_snapshot", snapshot.captured_at),
-            "occurred_at": snapshot.captured_at,
-            "environment": self.environment,
-            "event_type": "BROKER_SNAPSHOT",
-            "correlation_id": f"{self.environment}:broker_snapshot",
-            "payload": payload,
-            "source": "broker_truth_adapter",
-            "source_version": "broker-snapshot-v2",
-            "previous_event_hash": None,
-            "event_hash": self._stable_hash(payload),
-        }, prefer="return=minimal")
+        """Persist broker truth through the same tamper-evident runtime-event ledger."""
+        from integrations.runtime_event_store import RuntimeEventStore
+        from datetime import datetime, timezone
+
+        occurred_at_ms = int(datetime.fromisoformat(snapshot.captured_at.replace("Z", "+00:00")).timestamp() * 1000)
+        RuntimeEventStore(environment=self.environment, timeout_seconds=self.timeout_seconds).append_record(
+            event_id=self._event_id("broker_snapshot", snapshot.captured_at),
+            occurred_at_ms=occurred_at_ms,
+            event_type="BROKER_SNAPSHOT",
+            correlation_id=f"{self.environment}:broker_snapshot",
+            payload={
+                "orders": [
+                    {
+                        "broker_order_id": o.broker_order_id,
+                        "client_order_id": o.client_order_id,
+                        "instrument": o.instrument,
+                        "state": o.state,
+                        "filled_quantity": str(o.filled_quantity),
+                    }
+                    for o in snapshot.orders
+                ],
+                "positions": [
+                    {"instrument": p.instrument, "net_quantity": str(p.net_quantity)}
+                    for p in snapshot.positions
+                ],
+                "captured_at": snapshot.captured_at,
+            },
+            source="broker_truth_adapter",
+            source_version="broker-snapshot-v3",
+        )
 
     def record_outcome(self, outcome: ReconciliationOutcome) -> None:
         now = datetime.now(timezone.utc).isoformat()
