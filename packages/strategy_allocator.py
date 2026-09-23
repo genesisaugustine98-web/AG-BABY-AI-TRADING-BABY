@@ -45,7 +45,7 @@ class StrategyAllocator:
         order_index = {strategy_id: index for index, strategy_id in enumerate(strategy_order)}
         ordered = sorted(
             (candidate for candidate in candidates if candidate.state == "ADMITTED"),
-            key=lambda c: (order_index.get(c.model_id, len(order_index)), c.candidate_id),
+            key=lambda c: (order_index.get(c.strategy_id, len(order_index)), c.candidate_id),
         )
         approved: list[OpportunityCandidate] = []
         rejected: list[tuple[str, str]] = []
@@ -55,7 +55,7 @@ class StrategyAllocator:
 
         for candidate in ordered:
             risk = candidate.suggested_risk
-            strategy_key = candidate.model_id
+            strategy_key = candidate.strategy_id
             instrument_key = candidate.instrument
             reason = None
             if len(approved) >= self.limits.max_candidates:
