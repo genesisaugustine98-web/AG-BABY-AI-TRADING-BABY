@@ -55,6 +55,19 @@ class AllocationDecisionEvent(RuntimeEvent):
 
 
 @dataclass(frozen=True)
+class PortfolioRiskDecisionEvent(RuntimeEvent):
+    candidate_id: str
+    symbol: str
+    approved: bool
+    reasons: tuple[str, ...]
+    gross_fraction: str
+    net_fraction: str
+    margin_fraction: str
+    portfolio_volatility: str
+    beta_exposure: str
+
+
+@dataclass(frozen=True)
 class RiskDecisionEvent(RuntimeEvent):
     symbol: str
     intent_id: str
@@ -107,6 +120,7 @@ __all__ = [
     "ForecastEvent",
     "OpportunityEvent",
     "AllocationDecisionEvent",
+    "PortfolioRiskDecisionEvent",
     "RiskDecisionEvent",
     "OrderLifecycleEvent",
     "ReconciliationEvent",
