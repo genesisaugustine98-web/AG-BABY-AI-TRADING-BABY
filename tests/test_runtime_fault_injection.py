@@ -45,20 +45,21 @@ class Controller:
         return StrategyDecision("s1", "EURUSD", forecast, candidate)
 
 
-def test_malformed_market_freezes_node():
+def fail_market(**kwargs):
+    raise RuntimeError("MARKET_STATE_FAILURE")
+
+
+def test_market_fault_freezes_node():
     node = TradingNode(
         config=RuntimeConfig(allow_execution=False),
         market_data=BadFeed(),
         controllers=(Controller(),),
         context_factory=lambda **kwargs: None,
-        market_state_factory=lambda **kwargs: MarketState(
-            EventState.NORMAL, 0, Decimal("0"), Decimal("1"),
-            Decimal("0"), Decimal("1"), Decimal("1")
-        ),
+        market_state_factory=fail_market,
         clock=Clock(),
         event_bus=EventBus(),
     )
     node.start()
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="MARKET_STATE_FAILURE"):
         node.cycle()
     assert node.state.value == "FROZEN"
