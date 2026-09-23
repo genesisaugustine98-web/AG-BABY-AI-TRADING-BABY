@@ -556,7 +556,7 @@ class CanonicalTradingSystem:
                     estimated_cost_fraction=config.estimated_cost_fraction,
                     safety_margin_fraction=config.safety_margin_fraction,
                     allow_execution=config.allow_execution,
-                    config_fingerprint=config_fingerprint(config, excluded_fields=frozenset({"portfolio_correlations_json"})),
+                    config_fingerprint=config_fingerprint(config),
                 ),
                 market_data=feed,
                 controllers=tuple(controllers),
