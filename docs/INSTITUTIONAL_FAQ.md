@@ -63,3 +63,16 @@ The main remaining work is operational evidence: prolonged soak, deliberate faul
 ## Why not simply turn on live mode later?
 
 Because a live-capital boundary should be independently reviewed. The current demo constraint intentionally prevents a credential/configuration mistake from becoming a capital authorization mechanism.
+
+
+## Is there a physical/operator kill switch?
+
+Yes. The canonical runtime checks a local persistent emergency-freeze file before every cycle. The Windows deployment includes `freeze-demo-node.ps1`. The file is intentionally not removed by the robot; restart and resume require explicit operator action plus fresh broker reconciliation.
+
+## What if the configured risk limit disagrees with the execution engine?
+
+The canonical composition now constructs the execution kernel from the canonical risk configuration. Order, strategy, gross-risk, drawdown, daily-loss, open-position and broker/data-health limits are therefore not duplicated hidden defaults.
+
+## Can broker snapshots bypass the audit chain?
+
+No. Broker snapshots are routed through the same runtime event ledger, which is append-only at the database layer and protected by a hash-linked envelope.
