@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from packages.portfolio_risk import Exposure, PortfolioRiskEngine
+from packages.portfolio_risk import Exposure, PortfolioRiskEngine, PortfolioRiskLimits
 
 
 def test_portfolio_risk_accounts_for_correlation_and_limits():
