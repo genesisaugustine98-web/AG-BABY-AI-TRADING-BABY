@@ -18,6 +18,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install --upgrade pip pytest
+      - run: python -m compileall -q apps packages integrations tests
+      - run: python -m pip check
       - run: python -m pytest -q
 
   web:
@@ -30,3 +32,42 @@ jobs:
       - run: npm install
       - run: npm run lint
       - run: npm run build
+
+  windows-runtime-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile Python runtime
+        run: python -m compileall -q apps packages integrations tests
+      - name: Validate PowerShell deployment scripts
+        shell: pwsh
+        run: |
+          $errors = @()
+          Get-ChildItem deploy/windows -Filter *.ps1 -Recurse | ForEach-Object {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count -gt 0) {
+              $errors += "$($_.FullName): $($parseErrors | ForEach-Object Message -join '; ')"
+            }
+          }
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+      - name: Assert live execution is rejected by canonical config
+        shell: bash
+        run: |
+          python - <<'PY'
+          from apps.trading_runtime.canonical import CanonicalConfig
+          try:
+              CanonicalConfig(
+                  node_id="ci",
+                  symbols=("EURUSD",),
+                  environment="live",
+              ).validate()
+          except ValueError:
+              pass
+          else:
+              raise SystemExit("canonical runtime unexpectedly accepted live execution")
+          PY
