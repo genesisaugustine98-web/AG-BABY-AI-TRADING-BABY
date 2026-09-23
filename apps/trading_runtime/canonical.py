@@ -21,6 +21,7 @@ from packages.event_bus import EventBus
 from packages.events import FreezeEvent, OrderLifecycleEvent
 from packages.model_governance import ModelEvidence, ModelGovernance, ModelState
 from packages.circuit_breaker import CircuitBreakerLimits, ExecutionCircuitBreaker
+from packages.config_identity import config_fingerprint
 from packages.models import AdmissionContext, EventState, InstrumentSpec, MarketState, PortfolioState, TradeIntent
 from packages.portfolio_engine import PortfolioEngine, PositionSnapshot
 from packages.risk import size_for_cash_risk
@@ -428,6 +429,7 @@ class CanonicalTradingSystem:
                     estimated_cost_fraction=config.estimated_cost_fraction,
                     safety_margin_fraction=config.safety_margin_fraction,
                     allow_execution=config.allow_execution,
+                    config_fingerprint=config_fingerprint(config, excluded_fields=frozenset({"portfolio_correlations_json"})),
                 ),
                 market_data=feed,
                 controllers=tuple(controllers),
