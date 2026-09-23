@@ -19,7 +19,7 @@ from typing import Any
 
 from apps.execution_gateway.runtime import DemoExecutionRuntime
 from packages.event_bus import EventBus
-from packages.events import FreezeEvent, OrderLifecycleEvent
+from packages.events import FreezeEvent, OrderLifecycleEvent, RuntimeManifestEvent
 from packages.model_governance import ModelEvidence, ModelGovernance, ModelState
 from packages.circuit_breaker import CircuitBreakerLimits, ExecutionCircuitBreaker
 from packages.config_identity import config_fingerprint
@@ -592,6 +592,25 @@ class CanonicalTradingSystem:
             )
             system._lease = lease
             system._circuit_breaker = circuit_breaker
+            model_identities = tuple(
+                sorted(
+                    f"{getattr(controller.model, 'MODEL_ID', 'unknown')}:{getattr(controller.model, 'VERSION', 'unknown')}"
+                    for controller in controllers
+                )
+            )
+            event_bus.publish(
+                RuntimeManifestEvent(
+                    event_id=node._event_id("runtime-manifest"),
+                    occurred_at_ms=node.clock.now_ms(),
+                    source=config.node_id,
+                    source_version=f"canonical-v1:{node.config_fingerprint}",
+                    runtime_instance_id=node.runtime_instance_id,
+                    config_fingerprint=node.config_fingerprint,
+                    git_commit_sha=os.environ.get("GIT_COMMIT_SHA", "runtime"),
+                    environment=config.environment,
+                    model_identities=model_identities,
+                )
+            )
             if config.metrics_enabled:
                 metrics_server = MetricsHTTPServer(
                     host=config.metrics_host,
