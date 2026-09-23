@@ -70,6 +70,12 @@ class PortfolioEngine:
         self._positions = next_positions
         self._captured_at_ms = max(self._captured_at_ms, captured_at_ms)
 
+    def reset_order_risk_reservations(self) -> None:
+        self._reserved_order_risk.clear()
+
+    def reset_strategy_risk(self) -> None:
+        self._strategy_risk.clear()
+
     def reserve_order_risk(self, key: str, fraction: Decimal) -> None:
         key = key.strip()
         if not key or fraction < 0 or fraction > Decimal("1"):
