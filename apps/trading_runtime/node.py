@@ -293,6 +293,10 @@ class TradingNode:
             }
             rejected_reasons = {}
 
+        # Preserve the node's historical cycle result contract: strategy decisions are
+        # observable even when execution is disabled or allocation rejects them.
+        results.extend(decision for decision, _, _ in decisions)
+
         decision_by_id = {decision.candidate.candidate_id: (decision, quote, market) for decision, quote, market in decisions}
         for candidate in candidates:
             approved = candidate.candidate_id in approved_ids and candidate.state == "ADMITTED"
