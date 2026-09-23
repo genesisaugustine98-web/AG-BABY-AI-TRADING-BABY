@@ -428,6 +428,7 @@ class CanonicalPortfolioRiskGate:
                 quantity=position.net_quantity,
                 quote=position_quote,
                 spec=spec,
+                fx=fx,
             )
             exposures.append(
                 Exposure(
