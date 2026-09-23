@@ -110,4 +110,12 @@ grant execute on function public.runtime_acquire_lease(text, text, text, integer
 grant execute on function public.runtime_renew_lease(text, text, bigint, integer) to service_role;
 grant execute on function public.runtime_release_lease(text, text, bigint) to service_role;
 
+create policy "runtime leases service role only"
+on public.runtime_leases
+as restrictive
+for all
+to service_role
+using (true)
+with check (true);
+
 create index if not exists runtime_leases_until_idx on public.runtime_leases (lease_until);
