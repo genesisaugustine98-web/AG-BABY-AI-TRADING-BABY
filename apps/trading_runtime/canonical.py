@@ -27,6 +27,7 @@ from packages.models import AdmissionContext, EventState, InstrumentSpec, Market
 from packages.portfolio_engine import PortfolioEngine, PositionSnapshot
 from packages.portfolio_risk import Exposure, PortfolioRiskEngine, PortfolioRiskLimits, PortfolioRiskDecision
 from packages.risk import size_for_cash_risk
+from packages.risk_engine import RiskLimits
 from packages.strategy_allocator import AllocationLimits
 from packages.institutional_risk import InstitutionalAllocationLimits, InstitutionalStrategyAllocator, betas_from_env_payload, correlations_from_env_payload
 from packages.strategy_controller import TSMOMController
@@ -85,6 +86,11 @@ class CanonicalConfig:
     max_total_risk: Decimal = Decimal("0.03")
     max_per_strategy_risk: Decimal = Decimal("0.02")
     max_per_instrument_risk: Decimal = Decimal("0.01")
+    risk_max_drawdown: Decimal = Decimal("0.08")
+    risk_max_daily_loss: Decimal = Decimal("0.03")
+    risk_max_open_positions: int = 8
+    risk_min_broker_health: Decimal = Decimal("0.80")
+    risk_min_data_health: Decimal = Decimal("0.80")
     max_candidates: int = 8
     tsmom_lookback_bars: int = 24
     tsmom_horizon_bars: int = 6
@@ -135,6 +141,11 @@ class CanonicalConfig:
             max_total_risk=_decimal_env("AG_MAX_TOTAL_RISK", Decimal("0.03")),
             max_per_strategy_risk=_decimal_env("AG_MAX_STRATEGY_RISK", Decimal("0.02")),
             max_per_instrument_risk=_decimal_env("AG_MAX_INSTRUMENT_RISK", Decimal("0.01")),
+            risk_max_drawdown=_decimal_env("AG_RISK_MAX_DRAWDOWN", Decimal("0.08")),
+            risk_max_daily_loss=_decimal_env("AG_RISK_MAX_DAILY_LOSS", Decimal("0.03")),
+            risk_max_open_positions=_int_env("AG_RISK_MAX_OPEN_POSITIONS", 8),
+            risk_min_broker_health=_decimal_env("AG_RISK_MIN_BROKER_HEALTH", Decimal("0.80")),
+            risk_min_data_health=_decimal_env("AG_RISK_MIN_DATA_HEALTH", Decimal("0.80")),
             max_candidates=_int_env("AG_MAX_CANDIDATES", 8),
             tsmom_lookback_bars=_int_env("AG_TSMOM_LOOKBACK", 24),
             tsmom_horizon_bars=_int_env("AG_TSMOM_HORIZON", 6),
@@ -187,6 +198,10 @@ class CanonicalConfig:
             ("max_total_risk", self.max_total_risk),
             ("max_per_strategy_risk", self.max_per_strategy_risk),
             ("max_per_instrument_risk", self.max_per_instrument_risk),
+            ("risk_max_drawdown", self.risk_max_drawdown),
+            ("risk_max_daily_loss", self.risk_max_daily_loss),
+            ("risk_min_broker_health", self.risk_min_broker_health),
+            ("risk_min_data_health", self.risk_min_data_health),
             ("governance_min_calibration", self.governance_min_calibration),
             ("governance_max_drawdown", self.governance_max_drawdown),
             ("portfolio_max_correlation_adjusted_risk", self.portfolio_max_correlation_adjusted_risk),
@@ -199,8 +214,16 @@ class CanonicalConfig:
         ):
             if value < 0 or value > Decimal("1"):
                 raise ValueError(f"{name} must be in [0,1]")
-        if self.target_multiple <= 0 or self.max_candidates < 1:
-            raise ValueError("target_multiple and max_candidates must be positive")
+        if self.target_multiple <= 0 or self.max_candidates < 1 or self.risk_max_open_positions < 1:
+            raise ValueError("target_multiple, max_candidates and risk_max_open_positions must be positive")
+        if self.max_order_risk > self.max_per_strategy_risk:
+            raise ValueError("max_order_risk cannot exceed max_per_strategy_risk")
+        if self.max_per_strategy_risk > self.max_total_risk:
+            raise ValueError("max_per_strategy_risk cannot exceed max_total_risk")
+        if self.max_per_instrument_risk > self.max_total_risk:
+            raise ValueError("max_per_instrument_risk cannot exceed max_total_risk")
+        if self.portfolio_max_net_notional_fraction > self.portfolio_max_gross_notional_fraction:
+            raise ValueError("portfolio net-notional limit cannot exceed gross-notional limit")
         if self.tsmom_lookback_bars < 2 or self.tsmom_horizon_bars < 1 or self.tsmom_min_training_samples < 10:
             raise ValueError("invalid TSMOM configuration")
         if self.distributed_lease:
@@ -482,7 +505,18 @@ class CanonicalTradingSystem:
                     ttl_seconds=config.lease_ttl_seconds,
                 )
                 lease.acquire()
-            runtime = DemoExecutionRuntime.create()
+            runtime = DemoExecutionRuntime.create(
+                risk_limits=RiskLimits(
+                    max_order_risk=config.max_order_risk,
+                    max_strategy_risk=config.max_per_strategy_risk,
+                    max_gross_risk=config.max_total_risk,
+                    max_drawdown=config.risk_max_drawdown,
+                    max_daily_loss=config.risk_max_daily_loss,
+                    max_open_positions=config.risk_max_open_positions,
+                    min_broker_health=config.risk_min_broker_health,
+                    min_data_health=config.risk_min_data_health,
+                )
+            )
             event_bus = EventBus(history_limit=2000)
             store = RuntimeEventStore(
                 environment=config.environment,
