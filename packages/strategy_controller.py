@@ -63,6 +63,7 @@ class TSMOMController:
             estimated_cost=estimated_cost,
             safety_margin=safety_margin,
             evidence_ids=tuple(sorted(forecast.evidence_ids)),
+            strategy_id=self.strategy_id,
         )
         return StrategyDecision(
             strategy_id=self.strategy_id,
