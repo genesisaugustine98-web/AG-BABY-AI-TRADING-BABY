@@ -49,12 +49,12 @@ while ($true) {
       }
       else {
         $HealthFailures++
-        Write-Warning "AG-BABY runtime health failure $HealthFailures of $HealthFailureLimit."
+        Write-Warning "AG-BABY runtime health failure ${HealthFailures} of $HealthFailureLimit."
       }
     }
     catch {
       $HealthFailures++
-      Write-Warning "AG-BABY runtime health probe failed $HealthFailures of $HealthFailureLimit: $($_.Exception.Message)"
+      Write-Warning "AG-BABY runtime health probe failed ${HealthFailures} of $HealthFailureLimit: $($_.Exception.Message)"
     }
 
     if ($HealthFailures -ge $HealthFailureLimit) {
