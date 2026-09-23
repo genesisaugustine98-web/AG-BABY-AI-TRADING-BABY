@@ -199,7 +199,7 @@ class SupabaseExecutionStore:
             "GET",
             "execution_orders",
             query={
-                "select": "order_id,client_order_id,broker_order_id,environment,instrument,side",
+                "select": "order_id,client_order_id,broker_order_id,environment,instrument,side,metadata",
                 "order_id": f"eq.{_required(order_id, 'order_id')}",
             },
         ) or []
@@ -244,6 +244,34 @@ class SupabaseExecutionStore:
         if len(result) != 1:
             raise RuntimeError("confirmed-fill accounting returned no unique position")
         row = result[0]
+        order_metadata = dict(order.get("metadata") or {})
+        execution_observation = order_metadata.get("execution_observation") or {}
+        merged_tca_metadata = {**dict(execution_observation), **dict(fill.metadata)}
+        try:
+            from packages.execution_tca import TCAObservation
+            if merged_tca_metadata.get("decision_mid") is not None:
+                tca = TCAObservation.from_fill(
+                    environment=self.environment,
+                    order_id=fill.order_id,
+                    broker_order_id=fill.broker_order_id,
+                    strategy_id=str(merged_tca_metadata.get("strategy_id") or ""),
+                    model_id=str(merged_tca_metadata.get("model_id") or ""),
+                    model_version=str(merged_tca_metadata.get("model_version") or ""),
+                    instrument=fill.instrument,
+                    side=fill.side,
+                    requested_quantity=Decimal(str(order.get("requested_quantity") or fill.quantity)),
+                    filled_quantity=fill.quantity,
+                    decision_mid=Decimal(str(merged_tca_metadata["decision_mid"])),
+                    execution_price=fill.price,
+                    arrival_spread=Decimal(str(merged_tca_metadata.get("arrival_spread") or "0")),
+                    commission=fill.commission,
+                    financing=fill.financing,
+                    observed_at=fill.filled_at,
+                    metadata=merged_tca_metadata,
+                )
+                self.record_tca(tca)
+        except Exception:
+            pass
         return PositionState(
             instrument=str(row["instrument"]),
             net_quantity=Decimal(str(row["net_quantity"])),
@@ -251,6 +279,10 @@ class SupabaseExecutionStore:
             realized_pnl=Decimal(str(row["realized_pnl"])),
             financing_pnl=Decimal(str(row["financing_pnl"])),
         )
+
+    def record_tca(self, observation: Any) -> None:
+        payload = observation.to_record() if hasattr(observation, "to_record") else dict(observation)
+        self._request("POST", "execution_tca", payload=payload, prefer="return=minimal")
 
     def insert_fill(self, fill: BrokerConfirmedFill) -> tuple[str, bool]:
         """Legacy compatibility path; new workers should call ingest() for atomic accounting."""
