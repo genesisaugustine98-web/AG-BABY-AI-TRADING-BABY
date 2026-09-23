@@ -92,11 +92,14 @@ language sql
 security invoker
 set search_path = public
 as $$
-  delete from public.runtime_leases
-  where runtime_leases.lease_name = p_lease_name
-    and runtime_leases.owner_id = p_owner_id
-    and runtime_leases.fencing_token = p_fencing_token;
-  select found;
+  with deleted as (
+    delete from public.runtime_leases
+    where runtime_leases.lease_name = p_lease_name
+      and runtime_leases.owner_id = p_owner_id
+      and runtime_leases.fencing_token = p_fencing_token
+    returning 1
+  )
+  select exists(select 1 from deleted);
 $$;
 
 revoke execute on function public.runtime_acquire_lease(text, text, text, integer) from public, anon, authenticated;
