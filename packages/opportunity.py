@@ -25,6 +25,7 @@ class OpportunityCandidate:
     executable_edge: Decimal
     suggested_risk: Decimal
     state: str
+    strategy_id: str
     model_id: str
     model_version: str
     evidence_ids: tuple[str, ...]
@@ -43,10 +44,14 @@ def build_candidate(
     min_edge: Decimal = Decimal("0.0001"),
     base_risk: Decimal = Decimal("0.005"),
     evidence_ids: tuple[str, ...] = (),
+    strategy_id: str = "unspecified_strategy",
 ) -> OpportunityCandidate:
     instrument = instrument.strip().upper()
+    strategy_id = strategy_id.strip()
     if not instrument:
         raise ValueError("instrument must be non-empty")
+    if not strategy_id:
+        raise ValueError("strategy_id must be non-empty")
     if forecast.expected_return_unit != "fraction":
         raise ValueError("forecast expected_return_unit must be fraction")
     if not (Decimal("0") <= forecast.probability_up <= Decimal("1")):
@@ -75,7 +80,10 @@ def build_candidate(
 
     risk = base_risk if state == "ADMITTED" else Decimal("0")
     normalized_evidence = tuple(sorted(set(evidence_ids)))
-    stable = f"{instrument}|{side}|{forecast.model_id}|{forecast.version}|{forecast.generated_at_ms}|{edge}|{','.join(normalized_evidence)}"
+    stable = (
+        f"{instrument}|{side}|{strategy_id}|{forecast.model_id}|{forecast.version}|"
+        f"{forecast.generated_at_ms}|{edge}|{','.join(normalized_evidence)}"
+    )
     candidate_id = "opp-" + sha256(stable.encode("utf-8")).hexdigest()[:24]
     return OpportunityCandidate(
         candidate_id=candidate_id,
@@ -89,6 +97,7 @@ def build_candidate(
         executable_edge=edge,
         suggested_risk=risk,
         state=state,
+        strategy_id=strategy_id,
         model_id=forecast.model_id,
         model_version=forecast.version,
         evidence_ids=normalized_evidence,
