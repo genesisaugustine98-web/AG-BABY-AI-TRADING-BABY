@@ -7,6 +7,7 @@ from packages.execution_kernel import ExecutionAttempt, ExecutionKernel
 from packages.models import AdmissionContext, InstrumentSpec, TradeIntent
 from .mt5_gateway import DemoOnlyMT5Gateway
 from .mt5_orders import DemoOnlyMT5OrderAdapter
+from .order_controls import ControlResult, DemoOrderControls
 from integrations.supabase_order_store import SupabaseOrderStore
 from integrations.supabase_execution_store import SupabaseExecutionStore as SafetyStore
 from apps.reconciliation.service import DurableReconciliationService
@@ -92,6 +93,17 @@ class DemoExecutionRuntime:
             repository=self.orders,
             broker=broker,
         )
+
+    def cancel_order(self, *, order_id: str) -> ControlResult:
+        # Cancellation is truth-first too: establish current broker state before mutating it.
+        try:
+            reconciliation = self.reconciliation.reconcile_once()
+        except Exception as exc:
+            return ControlResult(False, None, (f"RECONCILIATION_EXCEPTION:{type(exc).__name__}",))
+        if reconciliation.freeze_required or not self.reconciliation.trading_permitted:
+            return ControlResult(False, None, ("RECONCILIATION_NOT_READY",))
+        broker = DemoOnlyMT5OrderAdapter(self.gateway._import())
+        return DemoOrderControls(self.orders, broker).cancel(order_id)
 
     def recover(self, *, order_id: str, client_order_id: str):
         broker = DemoOnlyMT5OrderAdapter(self.gateway._import())
