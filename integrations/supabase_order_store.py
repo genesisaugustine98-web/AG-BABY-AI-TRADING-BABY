@@ -45,6 +45,7 @@ class DurableOrder:
     limit_price: Decimal | None
     state: str
     broker_order_id: str | None
+    metadata: Mapping[str, Any] | None = None
 
 
 class SupabaseOrderStore(InternalOrderResolver):
@@ -86,7 +87,7 @@ class SupabaseOrderStore(InternalOrderResolver):
                 "environment": f"eq.{self.environment}",
                 "is_test_fixture": "eq.false",
                 "client_order_id": f"eq.{client_order_id}",
-                "select": "order_id,environment,intent_id,client_order_id,instrument,side,requested_quantity,order_type,limit_price,state,broker_order_id",
+                "select": "order_id,environment,intent_id,client_order_id,instrument,side,requested_quantity,order_type,limit_price,state,broker_order_id,metadata",
             },
         ) or []
         if len(rows) > 1:
@@ -162,7 +163,7 @@ class SupabaseOrderStore(InternalOrderResolver):
             query={
                 "environment": f"eq.{self.environment}",
                 "order_id": f"eq.{order_id}",
-                "select": "order_id,environment,intent_id,client_order_id,instrument,side,requested_quantity,order_type,limit_price,state,broker_order_id",
+                "select": "order_id,environment,intent_id,client_order_id,instrument,side,requested_quantity,order_type,limit_price,state,broker_order_id,metadata",
             },
         ) or []
         if len(rows) != 1:
@@ -182,7 +183,95 @@ class SupabaseOrderStore(InternalOrderResolver):
             limit_price=None if row.get("limit_price") is None else Decimal(str(row["limit_price"])),
             state=str(row["state"]),
             broker_order_id=None if row.get("broker_order_id") is None else str(row["broker_order_id"]),
+            metadata=dict(row.get("metadata") or {}),
         )
+
+    @staticmethod
+    def _merge_metadata(current: Mapping[str, Any], patch: Mapping[str, Any]) -> dict[str, Any]:
+        merged = dict(current)
+        merged.update({str(k): v for k, v in patch.items()})
+        return merged
+
+    def record_execution_observation(self, order_id: str, observation: Mapping[str, Any]) -> DurableOrder:
+        current = self.get(order_id)
+        metadata = self._merge_metadata(current.metadata or {}, {"execution_observation": dict(observation)})
+        self._request(
+            "PATCH",
+            "execution_orders",
+            query={"environment": f"eq.{self.environment}", "order_id": f"eq.{order_id}"},
+            body={"metadata": metadata, "last_internal_update_at": _utc_now()},
+            prefer="return=minimal",
+        )
+        return self.get(order_id)
+
+    def mark_replace_requested(
+        self,
+        order_id: str,
+        limit_price: Decimal,
+        stop_price: Decimal | None,
+        target_price: Decimal | None,
+        expires_at_ms: int,
+    ) -> DurableOrder:
+        current = self.get(order_id)
+        if current.state not in {"ACKNOWLEDGED", "PARTIALLY_FILLED"}:
+            raise RuntimeError(f"order_not_replaceable:{order_id}:{current.state}")
+        metadata = self._merge_metadata(
+            current.metadata or {},
+            {
+                "last_control": "REPLACE_REQUESTED",
+                "replacement_limit_price": str(limit_price),
+                "replacement_stop_price": None if stop_price is None else str(stop_price),
+                "replacement_target_price": None if target_price is None else str(target_price),
+                "replacement_expires_at_ms": int(expires_at_ms),
+            },
+        )
+        self._request(
+            "PATCH", "execution_orders",
+            query={"environment": f"eq.{self.environment}", "order_id": f"eq.{order_id}"},
+            body={"metadata": metadata, "last_internal_update_at": _utc_now()},
+            prefer="return=minimal",
+        )
+        return self.get(order_id)
+
+    def record_replacement(self, order_id: str, result: SubmissionResult) -> DurableOrder:
+        current = self.get(order_id)
+        metadata = self._merge_metadata(current.metadata or {}, {"last_control": "REPLACE_CONFIRMED" if result.outcome == "ACCEPTED" else "REPLACE_UNKNOWN"})
+        body: dict[str, Any] = {"metadata": metadata, "last_internal_update_at": _utc_now()}
+        if result.outcome == "UNKNOWN":
+            body["state"] = "UNKNOWN"
+        elif result.outcome == "REJECTED":
+            body["state"] = current.state
+        elif result.outcome == "ACCEPTED":
+            raw_price = metadata.get("replacement_limit_price")
+            if raw_price is not None:
+                body["limit_price"] = str(raw_price)
+        else:
+            raise ValueError(f"unsupported replacement outcome:{result.outcome}")
+        self._request("PATCH", "execution_orders", query={"environment": f"eq.{self.environment}", "order_id": f"eq.{order_id}"}, body=body, prefer="return=minimal")
+        return self.get(order_id)
+
+    def mark_expire_requested(self, order_id: str) -> DurableOrder:
+        current = self.mark_cancel_requested(order_id)
+        metadata = self._merge_metadata(current.metadata or {}, {"last_control": "EXPIRE_REQUESTED"})
+        self._request(
+            "PATCH", "execution_orders",
+            query={"environment": f"eq.{self.environment}", "order_id": f"eq.{order_id}"},
+            body={"metadata": metadata, "last_internal_update_at": _utc_now()},
+            prefer="return=minimal",
+        )
+        return self.get(order_id)
+
+    def record_expiration(self, order_id: str, result: SubmissionResult) -> DurableOrder:
+        current = self.get(order_id)
+        metadata = self._merge_metadata(current.metadata or {}, {"last_control": "EXPIRED" if result.outcome == "ACCEPTED" else "EXPIRE_UNKNOWN"})
+        if result.outcome == "ACCEPTED":
+            body = {"state": "CANCELLED", "metadata": metadata, "last_internal_update_at": _utc_now()}
+        elif result.outcome in {"REJECTED", "UNKNOWN"}:
+            body = {"state": "UNKNOWN", "metadata": metadata, "last_internal_update_at": _utc_now()}
+        else:
+            raise ValueError(f"unsupported expiration outcome:{result.outcome}")
+        self._request("PATCH", "execution_orders", query={"environment": f"eq.{self.environment}", "order_id": f"eq.{order_id}"}, body=body, prefer="return=minimal")
+        return self.get(order_id)
 
     def mark_submitting(self, order_id: str) -> DurableOrder:
         order_id = _required(order_id, "order_id")

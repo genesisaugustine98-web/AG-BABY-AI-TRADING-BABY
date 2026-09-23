@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from packages.execution_kernel import ExecutionAttempt, ExecutionKernel
 from packages.risk_engine import DeterministicRiskEngine, RiskLimits
 from packages.models import AdmissionContext, InstrumentSpec, TradeIntent
 from .mt5_gateway import DemoOnlyMT5Gateway
 from .mt5_orders import DemoOnlyMT5OrderAdapter
-from .order_controls import ControlResult, DemoOrderControls
+from .order_controls import ControlResult, DemoOrderControls, ReplaceRequest
 from integrations.supabase_order_store import SupabaseOrderStore
 from integrations.supabase_execution_store import SupabaseExecutionStore as SafetyStore
 from apps.reconciliation.service import DurableReconciliationService
@@ -97,6 +98,43 @@ class DemoExecutionRuntime:
             repository=self.orders,
             broker=broker,
         )
+
+    def replace_order(
+        self,
+        *,
+        order_id: str,
+        limit_price: Decimal,
+        stop_price: Decimal | None = None,
+        target_price: Decimal | None = None,
+        expires_at_ms: int = 0,
+    ) -> ControlResult:
+        try:
+            reconciliation = self.reconciliation.reconcile_once()
+        except Exception as exc:
+            return ControlResult(False, None, (f"RECONCILIATION_EXCEPTION:{type(exc).__name__}",))
+        if reconciliation.freeze_required or not self.reconciliation.trading_permitted:
+            return ControlResult(False, None, ("RECONCILIATION_NOT_READY",))
+        order = self.orders.get(order_id)
+        return DemoOrderControls(self.orders, DemoOnlyMT5OrderAdapter(self.gateway._import())).replace(
+            order_id,
+            ReplaceRequest(
+                symbol=order.instrument,
+                side=order.side,
+                limit_price=limit_price,
+                stop_price=stop_price,
+                target_price=target_price,
+                expires_at_ms=expires_at_ms,
+            ),
+        )
+
+    def expire_order(self, *, order_id: str) -> ControlResult:
+        try:
+            reconciliation = self.reconciliation.reconcile_once()
+        except Exception as exc:
+            return ControlResult(False, None, (f"RECONCILIATION_EXCEPTION:{type(exc).__name__}",))
+        if reconciliation.freeze_required or not self.reconciliation.trading_permitted:
+            return ControlResult(False, None, ("RECONCILIATION_NOT_READY",))
+        return DemoOrderControls(self.orders, DemoOnlyMT5OrderAdapter(self.gateway._import())).expire(order_id)
 
     def cancel_order(self, *, order_id: str) -> ControlResult:
         # Cancellation is truth-first too: establish current broker state before mutating it.

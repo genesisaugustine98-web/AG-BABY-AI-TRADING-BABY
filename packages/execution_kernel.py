@@ -69,6 +69,25 @@ class ExecutionKernel:
             return ExecutionAttempt("DENIED_RISK", client_order_id, None, None, risk, risk.reasons)
 
         durable = repository.ensure_intended(intent, client_order_id)
+        observe = getattr(repository, "record_execution_observation", None)
+        if callable(observe):
+            observe(
+                durable.order_id,
+                {
+                    "decision_mid": str(context.quote.mid),
+                    "arrival_mid": str(context.quote.mid),
+                    "arrival_spread": str(context.quote.spread),
+                    "strategy_id": intent.strategy_id,
+                    "strategy_version": intent.strategy_version,
+                    "policy_version": intent.policy_version,
+                    "model_id": context.forecast.model_id,
+                    "model_version": context.forecast.version,
+                    "forecast_expected_return": str(context.forecast.expected_return),
+                    "forecast_probability_up": str(context.forecast.probability_up),
+                    "forecast_calibration_score": str(context.forecast.calibration_score),
+                    "risk_fraction": str(intent.risk_fraction),
+                },
+            )
         terminal = {"FILLED", "REJECTED", "CANCELED", "CANCELLED"}
         if durable.state in terminal:
             return ExecutionAttempt(
@@ -94,6 +113,7 @@ class ExecutionKernel:
             limit_price=intent.limit_price,
             stop_price=intent.stop_price,
             target_price=intent.target_price,
+            expires_at_ms=intent.expires_at_ms,
         )
         try:
             result = broker.submit(request)

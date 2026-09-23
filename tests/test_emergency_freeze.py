@@ -31,7 +31,7 @@ def test_emergency_freeze_file_blocks_cycle(tmp_path: Path):
     node = TradingNode(
         config=RuntimeConfig(allow_execution=False, emergency_freeze_path=str(freeze)),
         market_data=Feed(),
-        controllers=(Controller(),)
+        controllers=(Controller(),),
         context_factory=lambda **kwargs: None,
         event_bus=EventBus(),
     )

@@ -21,6 +21,7 @@ class SubmissionRequest:
     limit_price: Decimal | None
     stop_price: Decimal | None = None
     target_price: Decimal | None = None
+    expires_at_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ class DemoOrderLifecycle:
                 limit_price=intent.limit_price,
                 stop_price=intent.stop_price,
                 target_price=intent.target_price,
+                expires_at_ms=intent.expires_at_ms,
             )
         )
         state = lifecycle_state(result, intent.quantity)

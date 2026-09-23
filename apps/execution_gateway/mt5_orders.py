@@ -95,7 +95,18 @@ class DemoOnlyMT5OrderAdapter:
         if target and ((side == "BUY" and target <= default_price) or (side == "SELL" and target >= default_price)):
             raise ValueError("protective target is on the wrong side of the market")
 
-        return {
+        type_time = int(getattr(self.mt5, "ORDER_TIME_GTC", 0))
+        expiration = None
+        if is_pending and request.expires_at_ms:
+            if request.expires_at_ms <= tick_time * 1000:
+                raise ValueError("pending order expiration must be in the future")
+            specified = getattr(self.mt5, "ORDER_TIME_SPECIFIED", None)
+            if specified is None:
+                raise RuntimeError("broker does not expose specified order expiration")
+            type_time = int(specified)
+            expiration = int(request.expires_at_ms // 1000)
+
+        payload = {
             "action": action,
             "symbol": request.symbol,
             "volume": float(volume),
@@ -106,7 +117,8 @@ class DemoOnlyMT5OrderAdapter:
             "deviation": int(os.getenv("MT5_MAX_DEVIATION_POINTS", "20")),
             "magic": int(os.getenv("MT5_MAGIC", "260917")),
             "comment": request.client_order_id,
-            "type_time": getattr(self.mt5, "ORDER_TIME_GTC", 0),
+            "type_time": type_time,
+            **({"expiration": expiration} if expiration is not None else {}),
             "type_filling": (
                 int(getattr(self.mt5, "ORDER_FILLING_RETURN"))
                 if is_pending
@@ -191,6 +203,77 @@ class DemoOnlyMT5OrderAdapter:
             raise RuntimeError(f"order_cancel failed:{self.mt5.last_error()}")
         retcode = int(getattr(result, "retcode", -1))
         return SubmissionResult("ACCEPTED" if retcode == getattr(self.mt5, "TRADE_RETCODE_DONE", -999999) else "REJECTED", broker_order_id=broker_order_id, reason=f"retcode:{retcode}")
+
+    def _active_order(self, broker_order_id: str) -> Any | None:
+        orders_get = getattr(self.mt5, "orders_get", None)
+        if not callable(orders_get):
+            raise RuntimeError("broker does not expose active-order lookup")
+        orders = orders_get()
+        if orders is None:
+            raise RuntimeError(f"orders_get failed:{self.mt5.last_error()}")
+        ticket = int(broker_order_id)
+        matches = [order for order in orders if int(getattr(order, "ticket", 0) or 0) == ticket]
+        if len(matches) > 1:
+            raise RuntimeError(f"ambiguous_active_order_ticket:{broker_order_id}")
+        return matches[0] if matches else None
+
+    def replace(
+        self,
+        broker_order_id: str,
+        *,
+        symbol: str,
+        side: str,
+        limit_price: Decimal,
+        stop_price: Decimal | None,
+        target_price: Decimal | None,
+        expires_at_ms: int = 0,
+    ) -> SubmissionResult:
+        current = self._active_order(broker_order_id)
+        if current is None:
+            return SubmissionResult("UNKNOWN", broker_order_id=str(broker_order_id), reason="ACTIVE_ORDER_NOT_FOUND")
+        allowed_types = {
+            int(getattr(self.mt5, name, -1))
+            for name in ("ORDER_TYPE_BUY_LIMIT", "ORDER_TYPE_SELL_LIMIT", "ORDER_TYPE_BUY_STOP", "ORDER_TYPE_SELL_STOP")
+        }
+        if int(getattr(current, "type", -1)) not in allowed_types:
+            return SubmissionResult("REJECTED", broker_order_id=str(broker_order_id), reason="MARKET_ORDER_REPLACE_UNSUPPORTED")
+        if limit_price <= 0:
+            raise ValueError("replacement limit price must be positive")
+        if expires_at_ms and expires_at_ms <= 0:
+            raise ValueError("replacement expiration must be positive when supplied")
+        request: dict[str, Any] = {
+            "action": int(getattr(self.mt5, "TRADE_ACTION_MODIFY")),
+            "order": int(broker_order_id),
+            "price": float(limit_price),
+            "sl": float(stop_price or Decimal("0")),
+            "tp": float(target_price or Decimal("0")),
+            "type_time": int(getattr(self.mt5, "ORDER_TIME_GTC", 0)),
+        }
+        if expires_at_ms:
+            request["type_time"] = int(getattr(self.mt5, "ORDER_TIME_SPECIFIED"))
+            request["expiration"] = int(expires_at_ms // 1000)
+        check = self.mt5.order_check(request)
+        if check is None:
+            raise RuntimeError(f"order_modify_check failed:{self.mt5.last_error()}")
+        check_retcode = int(getattr(check, "retcode", 0))
+        done_code = getattr(self.mt5, "TRADE_RETCODE_DONE", -1)
+        if check_retcode not in {0, done_code}:
+            return SubmissionResult("REJECTED", broker_order_id=str(broker_order_id), reason=f"order_modify_check_retcode:{check_retcode}")
+        result = self.mt5.order_send(request)
+        if result is None:
+            raise RuntimeError(f"order_modify failed:{self.mt5.last_error()}")
+        retcode = int(getattr(result, "retcode", -1))
+        if retcode != done_code:
+            return SubmissionResult("REJECTED", broker_order_id=str(broker_order_id), reason=f"order_modify_retcode:{retcode}")
+        return SubmissionResult("ACCEPTED", broker_order_id=str(broker_order_id), reason=f"retcode:{retcode}")
+
+    def expire(self, broker_order_id: str) -> SubmissionResult:
+        result = self.cancel(broker_order_id)
+        if result.outcome == "ACCEPTED":
+            return SubmissionResult("ACCEPTED", broker_order_id=str(broker_order_id), reason="EXPIRED")
+        if result.outcome == "UNKNOWN":
+            return result
+        return SubmissionResult("REJECTED", broker_order_id=str(broker_order_id), reason=result.reason or "EXPIRE_REJECTED")
 
 
 __all__ = ["DemoOnlyMT5OrderAdapter", "MT5OrderReceipt"]
