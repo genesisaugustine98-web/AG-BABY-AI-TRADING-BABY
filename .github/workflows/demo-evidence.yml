@@ -1,0 +1,49 @@
+name: demo-evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: "Use 1440 for the full 24-hour demo soak"
+        required: true
+        default: "1440"
+      run_demo_order_drill:
+        description: "Run the explicit pending-order ambiguity drill on the HFM demo account"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  demo-evidence:
+    runs-on: [self-hosted, Windows, mt5-demo]
+    timeout-minutes: 1500
+    env:
+      EXECUTION_ENV: demo
+      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+      MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+      MT5_SERVER: ${{ secrets.MT5_SERVER }}
+      MT5_DEMO_SERVER: ${{ secrets.MT5_DEMO_SERVER }}
+      MT5_TERMINAL_PATH: ${{ secrets.MT5_TERMINAL_PATH }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      AG_SYMBOLS: ${{ vars.AG_SYMBOLS || 'USDJPY' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Run real demo evidence
+        shell: pwsh
+        run: |
+          $args = @("scripts/run_demo_evidence.py","--duration-minutes","${{ github.event.inputs.duration_minutes }}","--symbols","$env:AG_SYMBOLS","--output","artifacts/evidence/demo-evidence-${{ github.sha }}.json")
+          if ("${{ github.event.inputs.run_demo_order_drill }}" -eq "true") { $args += "--real-demo-order-drill" }
+          python @args
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-evidence-${{ github.sha }}
+          path: artifacts/evidence/*.json
+          if-no-files-found: error
