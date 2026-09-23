@@ -30,6 +30,7 @@ from packages.tsmom_forecast import PriceBar, TSMOMForecastModel, TSMOMValidatio
 from packages.runtime_supervisor import RuntimeState
 from integrations.runtime_event_store import RuntimeEventStore, attach_runtime_event_store
 from integrations.supabase_runtime_lease import SupabaseRuntimeLease, LeaseLost
+from .metrics_server import MetricsHTTPServer
 
 from .mt5_runtime import MT5RuntimeAdapter
 from .node import RuntimeConfig, TradingNode
@@ -96,6 +97,9 @@ class CanonicalConfig:
     distributed_lease: bool = False
     lease_name: str = ""
     lease_ttl_seconds: int = 30
+    metrics_enabled: bool = False
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = 9300
 
     @classmethod
     def from_env(cls) -> "CanonicalConfig":
@@ -135,6 +139,9 @@ class CanonicalConfig:
             distributed_lease=_bool_env("AG_DISTRIBUTED_LEASE", False),
             lease_name=os.environ.get("AG_LEASE_NAME", "").strip(),
             lease_ttl_seconds=_int_env("AG_LEASE_TTL_SECONDS", 30),
+            metrics_enabled=_bool_env("AG_METRICS_ENABLED", False),
+            metrics_host=os.environ.get("AG_METRICS_HOST", "127.0.0.1").strip(),
+            metrics_port=_int_env("AG_METRICS_PORT", 9300),
         )
         config.validate()
         return config
@@ -175,6 +182,11 @@ class CanonicalConfig:
                 raise ValueError("AG_LEASE_NAME is required when distributed lease is enabled")
             if self.lease_ttl_seconds < 5 or self.lease_ttl_seconds > 300:
                 raise ValueError("lease_ttl_seconds must be between 5 and 300")
+        if self.metrics_enabled:
+            if self.metrics_host not in {"127.0.0.1", "::1", "localhost"}:
+                raise ValueError("metrics_host must remain loopback-only")
+            if self.metrics_port < 1024 or self.metrics_port > 65535:
+                raise ValueError("metrics_port must be between 1024 and 65535")
 
 
 class CanonicalMarketStateFactory:
@@ -308,6 +320,7 @@ class CanonicalTradingSystem:
         self.event_bus = event_bus
         self._closed = False
         self._lease: SupabaseRuntimeLease | None = None
+        self._metrics_server: MetricsHTTPServer | None = None
 
     @classmethod
     def create(cls, config: CanonicalConfig) -> "CanonicalTradingSystem":
@@ -316,6 +329,7 @@ class CanonicalTradingSystem:
         lock.acquire()
         runtime: DemoExecutionRuntime | None = None
         lease: SupabaseRuntimeLease | None = None
+        metrics_server: MetricsHTTPServer | None = None
         try:
             if config.distributed_lease:
                 lease = SupabaseRuntimeLease(
@@ -403,11 +417,33 @@ class CanonicalTradingSystem:
                 event_bus=event_bus,
             )
             system._lease = lease
+            if config.metrics_enabled:
+                metrics_server = MetricsHTTPServer(
+                    host=config.metrics_host,
+                    port=config.metrics_port,
+                    snapshot_provider=lambda: {
+                        "healthy": system.node.supervisor.health(system.node.clock.now_ms()).healthy,
+                        "ready": system.node.state == RuntimeState.RUNNING,
+                        "state": system.node.state.value,
+                        "cycles": system.node.metrics.snapshot().cycles,
+                        "cycle_failures": system.node.metrics.snapshot().cycle_failures,
+                        "execution_attempts": system.node.metrics.snapshot().execution_attempts,
+                        "execution_unknown": system.node.metrics.snapshot().execution_unknown,
+                        "freezes": system.node.metrics.snapshot().freezes,
+                    },
+                )
+                metrics_server.start()
+                system._metrics_server = metrics_server
             return system
         except Exception:
             if runtime is not None:
                 try:
                     runtime.close()
+                except Exception:
+                    pass
+            if metrics_server is not None:
+                try:
+                    metrics_server.close()
                 except Exception:
                     pass
             if lease is not None:
@@ -497,10 +533,14 @@ class CanonicalTradingSystem:
             self.runtime.close()
         finally:
             try:
-                if self._lease is not None:
-                    self._lease.release()
+                if self._metrics_server is not None:
+                    self._metrics_server.close()
             finally:
-                self.lock.release()
+                try:
+                    if self._lease is not None:
+                        self._lease.release()
+                finally:
+                    self.lock.release()
                 self._closed = True
 
 
