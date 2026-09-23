@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import ssl
+from datetime import datetime, timezone
 import urllib.request
 from dataclasses import asdict, is_dataclass
 from decimal import Decimal
@@ -40,6 +41,45 @@ class SupabaseModelRegistry:
             "feature_version": str(validation.feature_fingerprint),
         }
         self._request("POST", "model_registry", payload, prefer="resolution=merge-duplicates,return=minimal")
+
+    def get_status(self, *, model_id: str, version: str) -> str | None:
+        rows = self._request("GET", "model_registry", query={
+            "model_id": f"eq.{model_id}", "version": f"eq.{version}", "select": "status", "limit": "1"
+        }) or []
+        return str(rows[0]["status"]) if rows else None
+
+    def record_surveillance(
+        self,
+        *,
+        model_id: str,
+        version: str,
+        decision: Any,
+        environment: str,
+    ) -> None:
+        self._request("POST", "model_surveillance_events", {
+            "environment": environment,
+            "model_id": model_id,
+            "version": version,
+            "decision": decision.decision,
+            "breach_count": decision.breach_count,
+            "psi": decision.psi,
+            "brier_score": decision.brier_score,
+            "rolling_net_bps": decision.rolling_net_bps,
+            "drawdown_fraction": decision.drawdown_fraction,
+            "reasons": list(decision.reasons),
+            "metrics": {"decision": decision.decision},
+        }, prefer="return=minimal")
+
+    def retire(self, *, model_id: str, version: str, reason: str) -> None:
+        status=self.get_status(model_id=model_id, version=version)
+        if status == "retired": return
+        if status is None: raise RuntimeError(f"model_not_registered:{model_id}:{version}")
+        self._request(
+            "PATCH", "model_registry",
+            {"status": "retired", "retired_at": datetime.now(timezone.utc).isoformat()},
+            query={"model_id": f"eq.{model_id}", "version": f"eq.{version}"},
+            prefer="return=minimal",
+        )
 
     def _request(self, method: str, table: str, body: Any = None, *, prefer: str | None = None) -> Any:
         url = f"{self.base_url}/rest/v1/{table}"
