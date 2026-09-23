@@ -99,6 +99,15 @@ class FreezeEvent(RuntimeEvent):
 
 
 @dataclass(frozen=True)
+class RuntimeManifestEvent(RuntimeEvent):
+    runtime_instance_id: str
+    config_fingerprint: str
+    git_commit_sha: str
+    environment: str
+    model_identities: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class HeartbeatEvent(RuntimeEvent):
     node_id: str
     state: str
@@ -126,5 +135,6 @@ __all__ = [
     "ReconciliationEvent",
     "FreezeEvent",
     "HeartbeatEvent",
+    "RuntimeManifestEvent",
     "StrategyDecision",
 ]
