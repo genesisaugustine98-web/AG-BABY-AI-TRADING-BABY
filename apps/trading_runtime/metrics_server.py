@@ -58,10 +58,10 @@ class MetricsHTTPServer:
         self._thread.start()
 
     def close(self) -> None:
-        self._server.shutdown()
-        self._server.server_close()
-        if self._thread:
+        if self._thread and self._thread.is_alive():
+            self._server.shutdown()
             self._thread.join(timeout=2)
+        self._server.server_close()
 
 
 def _prometheus(payload: Mapping[str, object]) -> str:
