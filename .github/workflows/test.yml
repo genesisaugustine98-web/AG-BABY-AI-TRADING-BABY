@@ -51,7 +51,8 @@ jobs:
             $parseErrors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
             if ($parseErrors.Count -gt 0) {
-              $errors += "$($_.FullName): $($parseErrors | ForEach-Object Message -join '; ')"
+              $messages = ($parseErrors | ForEach-Object { $_.Message }) -join '; '
+              $errors += "$($_.FullName): $messages"
             }
           }
           if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
