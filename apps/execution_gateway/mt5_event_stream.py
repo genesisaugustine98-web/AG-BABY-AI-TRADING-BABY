@@ -52,6 +52,30 @@ def _event_time_ms(order: Any) -> int:
 
 
 class MT5BrokerOrderEventStream:
+    def _side(self, raw_type: Any) -> str:
+        try:
+            value = int(raw_type)
+        except (TypeError, ValueError):
+            value = -1
+        if value in {int(getattr(self.mt5, "ORDER_TYPE_BUY", -100)), int(getattr(self.mt5, "ORDER_TYPE_BUY_LIMIT", -101)),
+                     int(getattr(self.mt5, "ORDER_TYPE_BUY_STOP", -102)), int(getattr(self.mt5, "ORDER_TYPE_BUY_STOP_LIMIT", -103))}:
+            return "BUY"
+        if value in {int(getattr(self.mt5, "ORDER_TYPE_SELL", -200)), int(getattr(self.mt5, "ORDER_TYPE_SELL_LIMIT", -201)),
+                     int(getattr(self.mt5, "ORDER_TYPE_SELL_STOP", -202)), int(getattr(self.mt5, "ORDER_TYPE_SELL_STOP_LIMIT", -203))}:
+            return "SELL"
+        return "UNKNOWN"
+
+    def _state(self, raw_state: Any) -> str:
+        mapping = {
+            getattr(self.mt5, "TRADE_ORDER_STATE_STARTED", object()): "SUBMITTING",
+            getattr(self.mt5, "TRADE_ORDER_STATE_PLACED", object()): "ACCEPTED",
+            getattr(self.mt5, "TRADE_ORDER_STATE_CANCELED", object()): "CANCELED",
+            getattr(self.mt5, "TRADE_ORDER_STATE_PARTIAL", object()): "PARTIAL",
+            getattr(self.mt5, "TRADE_ORDER_STATE_FILLED", object()): "FILLED",
+            getattr(self.mt5, "TRADE_ORDER_STATE_REJECTED", object()): "REJECTED",
+            getattr(self.mt5, "TRADE_ORDER_STATE_EXPIRED", object()): "CANCELED",
+        }
+        return mapping.get(raw_state, str(raw_state))
     def __init__(
         self,
         mt5_api: BrokerOrderQueryAPI,
@@ -97,9 +121,9 @@ class MT5BrokerOrderEventStream:
             client_order_id = str(getattr(order, "comment", "") or "").strip()
             raw_state = str(getattr(order, "state", "") or "")
             instrument = str(getattr(order, "symbol", "") or "").strip()
-            order_type = str(getattr(order, "type", "") or "")
-            side = "BUY" if "BUY" in order_type.upper() else "SELL" if "SELL" in order_type.upper() else "UNKNOWN"
-            state = raw_state
+            raw_type = getattr(order, "type", None)
+            side = self._side(raw_type)
+            state = self._state(getattr(order, "state", raw_state))
             payload = "|".join([
                 broker_id, client_order_id, instrument, side, state, str(event_time),
                 str(getattr(order, "volume_current", "")), str(getattr(order, "price_open", "")),
