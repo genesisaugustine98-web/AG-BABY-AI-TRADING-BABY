@@ -531,7 +531,7 @@ class CanonicalTradingSystem:
             finally:
                 self.event_bus.publish(
                     FreezeEvent(
-                        event_id=f"{self.config.node_id}:canonical-freeze:{self.node._cycle_number + 1}",
+                        event_id=self.node._event_id(f"canonical-freeze:{self.node._cycle_number + 1}"),
                         occurred_at_ms=self.node.clock.now_ms(),
                         source=self.config.node_id,
                         source_version="canonical-v1",
