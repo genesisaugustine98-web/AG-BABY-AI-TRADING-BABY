@@ -13,6 +13,10 @@ def run_simulated_drills()->dict[str,dict]:
     out["freeze_requires_restart"]={"status":"PASS" if blocked.terminal_state=="FROZEN" and blocked.recoveries==0 else "FAIL","details":{"report":blocked.__dict__}}
     recovered=DeterministicSoakHarness().run(FaultPlan(8,{2:FaultKind.BROKER_UNKNOWN,4:FaultKind.RESTART,5:FaultKind.RECONCILIATION_READY}))
     out["restart_requires_reconciliation"]={"status":"PASS" if recovered.terminal_state=="RUNNING" and recovered.recoveries==1 else "FAIL","details":{"report":recovered.__dict__}}
+    outage=DeterministicSoakHarness().run(FaultPlan(10,{2:FaultKind.SUPABASE,4:FaultKind.RESTART,5:FaultKind.RECONCILIATION_READY}))
+    out["database_outage_fail_closed"]={"status":"PASS" if outage.freezes==1 and outage.recoveries==1 and outage.terminal_state=="RUNNING" else "FAIL","details":{"report":outage.__dict__}}
+    network=DeterministicSoakHarness().run(FaultPlan(10,{2:FaultKind.RECONCILIATION,6:FaultKind.RESTART,7:FaultKind.RECONCILIATION_READY}))
+    out["network_or_truth_outage_fail_closed"]={"status":"PASS" if network.freezes==1 and network.recoveries==1 and network.terminal_state=="RUNNING" else "FAIL","details":{"report":network.__dict__}}
     alerts=[]
     router=RuntimeAlertRouter(lambda **kwargs: alerts.append(kwargs))
     router.observe(FreezeEvent("e1",1,"drill","1","demo","FAILSAFE"))

@@ -16,10 +16,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: demo-evidence
+  cancel-in-progress: false
+
 jobs:
   demo-evidence:
     runs-on: [self-hosted, Windows, mt5-demo]
     timeout-minutes: 1500
+    environment: demo-evidence
     env:
       EXECUTION_ENV: demo
       MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
