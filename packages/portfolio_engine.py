@@ -36,12 +36,20 @@ class PortfolioEngine:
         self._day_start_equity = initial_equity if initial_equity is not None else Decimal("0")
         self._peak_equity = initial_equity if initial_equity is not None else Decimal("0")
         self._positions: dict[str, PositionSnapshot] = {}
+        self._margin = Decimal("0")
         self._reserved_order_risk: dict[str, Decimal] = {}
         self._strategy_risk: dict[str, Decimal] = {}
         self._frozen = True
         self._captured_at_ms = 0
 
-    def update_account(self, *, captured_at_ms: int, balance: Decimal, equity: Decimal) -> None:
+    def update_account(
+        self,
+        *,
+        captured_at_ms: int,
+        balance: Decimal,
+        equity: Decimal,
+        margin: Decimal | None = None,
+    ) -> None:
         if captured_at_ms <= 0 or balance < 0 or equity < 0:
             raise ValueError("invalid account snapshot")
         if self._captured_at_ms and captured_at_ms < self._captured_at_ms:
@@ -49,6 +57,10 @@ class PortfolioEngine:
         self._captured_at_ms = captured_at_ms
         self._balance = balance
         self._equity = equity
+        if margin is not None:
+            if not margin.is_finite() or margin < 0:
+                raise ValueError("invalid account margin")
+            self._margin = margin
         if self._day_start_equity <= 0:
             self._day_start_equity = equity
         self._peak_equity = max(self._peak_equity, equity)
@@ -69,6 +81,15 @@ class PortfolioEngine:
             next_positions[symbol] = PositionSnapshot(symbol, position.net_quantity, position.strategy_id)
         self._positions = next_positions
         self._captured_at_ms = max(self._captured_at_ms, captured_at_ms)
+
+    def position_snapshots(self) -> tuple[PositionSnapshot, ...]:
+        """Return an immutable broker-authoritative position snapshot for risk valuation."""
+        return tuple(self._positions.values())
+
+    def margin_fraction(self) -> Decimal:
+        if self._equity <= 0:
+            raise RuntimeError("portfolio equity is not initialized")
+        return self._margin / self._equity
 
     def reset_order_risk_reservations(self) -> None:
         self._reserved_order_risk.clear()
