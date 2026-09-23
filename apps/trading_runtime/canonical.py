@@ -34,6 +34,7 @@ from packages.institutional_risk import InstitutionalAllocationLimits, Instituti
 from packages.strategy_controller import TSMOMController
 from packages.tsmom_forecast import PriceBar, TSMOMForecastModel, TSMOMValidation, dataset_fingerprint
 from packages.runtime_supervisor import RuntimeState
+from packages.fx_valuation import USDConversionGraph
 from integrations.runtime_event_store import RuntimeEventStore, attach_runtime_event_store
 from integrations.supabase_runtime_lease import SupabaseRuntimeLease, LeaseLost
 from integrations.supabase_model_registry import SupabaseModelRegistry
@@ -121,6 +122,7 @@ class CanonicalConfig:
     portfolio_max_volatility: Decimal = Decimal("0.20")
     portfolio_max_beta_exposure: Decimal = Decimal("0.25")
     portfolio_betas_json: str = "{}"
+    portfolio_fx_symbols: tuple[str, ...] = ()
     research_min_validation_periods: int = 3
     research_min_cost_stress_points: int = 2
     research_min_slippage_stress_points: int = 2
@@ -180,6 +182,7 @@ class CanonicalConfig:
             portfolio_max_volatility=_decimal_env("AG_MAX_PORTFOLIO_VOL", Decimal("0.20")),
             portfolio_max_beta_exposure=_decimal_env("AG_MAX_PORTFOLIO_BETA", Decimal("0.25")),
             portfolio_betas_json=os.environ.get("AG_PORTFOLIO_BETAS", "{}"),
+            portfolio_fx_symbols=tuple(dict.fromkeys(x.strip().upper() for x in os.environ.get("AG_PORTFOLIO_FX_SYMBOLS", "").split(",") if x.strip())),
             research_min_validation_periods=_int_env("AG_RESEARCH_MIN_VALIDATION_PERIODS", 3),
             research_min_cost_stress_points=_int_env("AG_RESEARCH_MIN_COST_STRESS_POINTS", 2),
             research_min_slippage_stress_points=_int_env("AG_RESEARCH_MIN_SLIPPAGE_STRESS_POINTS", 2),
@@ -383,6 +386,7 @@ class CanonicalPortfolioRiskGate:
         self.config = config
         self.correlations = correlations_from_env_payload(config.portfolio_correlations_json)
         self.betas = betas_from_env_payload(config.portfolio_betas_json)
+        self.fx_symbols = config.portfolio_fx_symbols
         self.engine = PortfolioRiskEngine(
             PortfolioRiskLimits(
                 max_gross_notional_fraction=config.portfolio_max_gross_notional_fraction,
@@ -404,6 +408,11 @@ class CanonicalPortfolioRiskGate:
         instrument,
         now_ms: int,
     ) -> PortfolioRiskDecision:
+        fx = USDConversionGraph()
+        for fx_symbol in self.fx_symbols:
+            fx_spec = self.market_data.instrument_spec(fx_symbol)
+            fx_quote = self.market_data.quote(fx_symbol, now_ms=now_ms)
+            fx.add_pair(fx_spec.symbol, fx_quote.mid)
         exposures: list[Exposure] = []
         for position in self.portfolio.position_snapshots():
             if position.net_quantity == 0:
@@ -433,6 +442,7 @@ class CanonicalPortfolioRiskGate:
             quantity=intent.quantity if intent.side.upper() == "BUY" else -intent.quantity,
             quote=quote,
             spec=instrument,
+            fx=fx,
         )
         exposures.append(
             Exposure(
@@ -457,14 +467,18 @@ class CanonicalPortfolioRiskGate:
         )
 
     @staticmethod
-    def _usd_notional(*, quantity: Decimal, quote, spec: InstrumentSpec) -> Decimal:
+    def _usd_notional(*, quantity: Decimal, quote, spec: InstrumentSpec, fx: USDConversionGraph) -> Decimal:
+        units = quantity * spec.contract_size
         base = spec.base_ccy.upper()
         quote_ccy = spec.quote_ccy.upper()
         if quote_ccy == "USD":
-            return quantity * spec.contract_size * quote.mid
+            return units * quote.mid
         if base == "USD":
-            return quantity * spec.contract_size
-        raise RuntimeError(f"portfolio USD valuation unavailable:{spec.symbol}:{base}/{quote_ccy}")
+            return units
+        try:
+            return fx.quote_notional_usd(base_ccy=base, quote_ccy=quote_ccy, units=units, price=quote.mid)
+        except RuntimeError as exc:
+            raise RuntimeError(f"portfolio USD valuation unavailable:{spec.symbol}:{base}/{quote_ccy}") from exc
 
     def _realized_volatility(self, bars) -> Decimal:
         closes = [Decimal(str(getattr(bar, "close"))) for bar in bars if Decimal(str(getattr(bar, "close"))) > 0]
