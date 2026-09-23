@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from time import sleep, time
 from uuid import uuid4
+from pathlib import Path
 from typing import Callable, Protocol
 
 from packages.event_bus import EventBus
@@ -137,6 +138,7 @@ class RuntimeConfig:
     max_cycles_without_progress: int = 3
     runtime_instance_id: str = ""
     config_fingerprint: str = ""
+    emergency_freeze_path: str = "runtime/EMERGENCY_FREEZE"
 
     def __post_init__(self) -> None:
         if not self.node_id.strip():
@@ -155,6 +157,8 @@ class RuntimeConfig:
             raise ValueError("runtime_instance_id must be non-empty when supplied")
         if self.config_fingerprint and not self.config_fingerprint.strip():
             raise ValueError("config_fingerprint must be non-empty when supplied")
+        if self.emergency_freeze_path and not self.emergency_freeze_path.strip():
+            raise ValueError("emergency_freeze_path must be non-empty when supplied")
 
 
 class TradingNode:
@@ -209,10 +213,18 @@ class TradingNode:
         self.supervisor.start()
         self.supervisor.mark_ready(now)
 
+    def _check_emergency_freeze(self) -> None:
+        path = self.config.emergency_freeze_path.strip()
+        if path and Path(path).exists():
+            reason = "EMERGENCY_FREEZE_FILE"
+            self.supervisor.freeze(reason)
+            raise RuntimeError(reason)
+
     def cycle(self) -> tuple[object, ...]:
         now_ms = self.clock.now_ms()
         if self.supervisor.state in {RuntimeState.CREATED, RuntimeState.STOPPED}:
             raise RuntimeError("node must be started before cycle")
+        self._check_emergency_freeze()
         self.metrics.start_cycle()
         failures_before = len(self.events.failures())
         try:
