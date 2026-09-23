@@ -198,6 +198,39 @@ class SupabaseOrderStore(InternalOrderResolver):
         )
         return self.get(order_id)
 
+    def mark_cancel_requested(self, order_id: str) -> DurableOrder:
+        order_id = _required(order_id, "order_id")
+        current = self.get(order_id)
+        if current.state not in {"SUBMITTED", "ACKNOWLEDGED", "PARTIALLY_FILLED"}:
+            raise RuntimeError(f"order_not_cancelable:{order_id}:{current.state}")
+        self._request(
+            "PATCH",
+            "execution_orders",
+            query={"environment": f"eq.{self.environment}", "order_id": f"eq.{order_id}"},
+            body={"state": "CANCEL_REQUESTED", "last_internal_update_at": _utc_now()},
+            prefer="return=minimal",
+        )
+        return self.get(order_id)
+
+    def record_cancellation(self, order_id: str, result: SubmissionResult) -> DurableOrder:
+        order_id = _required(order_id, "order_id")
+        if result.outcome == "ACCEPTED":
+            state = "CANCELLED"
+        elif result.outcome in {"REJECTED", "UNKNOWN"}:
+            # A rejected/ambiguous cancel must not be interpreted as proof that the
+            # original order remains untouched. Reconciliation owns the truth.
+            state = "UNKNOWN"
+        else:
+            raise ValueError(f"unsupported cancellation outcome:{result.outcome}")
+        self._request(
+            "PATCH",
+            "execution_orders",
+            query={"environment": f"eq.{self.environment}", "order_id": f"eq.{order_id}"},
+            body={"state": state, "last_internal_update_at": _utc_now()},
+            prefer="return=minimal",
+        )
+        return self.get(order_id)
+
     def record_submission(self, order_id: str, result: SubmissionResult) -> DurableOrder:
         current = self.get(order_id)
         if result.outcome == "UNKNOWN":
