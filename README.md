@@ -76,3 +76,14 @@ This release is a substantially integrated **research + execution-control founda
 ## Build baseline
 
 Integrated hardening baseline: 2026-09-17. Exact synchronized branch validation: **165 Python tests passed; Next.js lint and production build passed on commit `3566c92eb034b2fd2bd929d87641e1fe97d5469f`.** Vercel deployment remains an external deployment-system check; the current cockpit tree itself is validated by GitHub CI.
+
+
+## Canonical autonomous runtime
+
+The repository now exposes one composition root for the demo execution body system:
+
+~~~bash
+python -m apps.trading_runtime
+~~~
+
+That process binds MT5 market data, per-symbol TSMOM models, evidence-gated model governance, strategy allocation, portfolio/account refresh, deterministic policy/risk, durable order identity, broker reconciliation, durable runtime events, lifecycle supervision, host singleton control, and fail-safe shutdown. Execution remains explicitly demo-only; credentials stay in server-side environment variables. Deployment details are in `docs/CANONICAL_RUNTIME.md`.
