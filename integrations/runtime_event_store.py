@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import ssl
+from threading import RLock
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, is_dataclass
@@ -27,28 +28,48 @@ class RuntimeEventStore:
         self.timeout_seconds = timeout_seconds
         self.base_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
         self.api_key = os.environ.get("SUPABASE_SECRET_KEY", "") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+        self._chain_lock = RLock()
+        self._last_event_hash: str | None = None
         if not self.base_url or not self.api_key:
             raise RuntimeError("SUPABASE_URL and server-side Supabase key are required")
         if not self.base_url.startswith("https://"):
             raise RuntimeError("SUPABASE_URL must use https")
 
     def append(self, event: RuntimeEvent) -> None:
-        payload = {
-            "event_id": event.event_id,
-            "occurred_at": datetime.fromtimestamp(event.occurred_at_ms / 1000, tz=timezone.utc).isoformat(),
-            "environment": self.environment,
-            "event_type": type(event).__name__,
-            "correlation_id": self._correlation_id(event),
-            "order_id": getattr(event, "order_id", None),
-            "broker_order_id": getattr(event, "broker_order_id", None),
-            "position_id": getattr(event, "symbol", None),
-            "payload": self._jsonable(event),
-            "source": event.source,
-            "source_version": event.source_version,
-            "previous_event_hash": None,
-            "event_hash": self._stable_hash(event),
-        }
-        self._request("POST", "execution_events", payload)
+        with self._chain_lock:
+            if self._last_event_hash is None:
+                rows = self._request(
+                    "GET",
+                    "execution_events",
+                    query={
+                        "environment": f"eq.{self.environment}",
+                        "select": "event_hash",
+                        "event_hash": "not.is.null",
+                        "order": "occurred_at.desc,event_id.desc",
+                        "limit": "1",
+                    },
+                ) or []
+                self._last_event_hash = str(rows[0]["event_hash"]) if rows else None
+
+            previous_hash = self._last_event_hash
+            event_hash = self._stable_hash(event, previous_hash)
+            payload = {
+                "event_id": event.event_id,
+                "occurred_at": datetime.fromtimestamp(event.occurred_at_ms / 1000, tz=timezone.utc).isoformat(),
+                "environment": self.environment,
+                "event_type": type(event).__name__,
+                "correlation_id": self._correlation_id(event),
+                "order_id": getattr(event, "order_id", None),
+                "broker_order_id": getattr(event, "broker_order_id", None),
+                "position_id": getattr(event, "symbol", None),
+                "payload": self._jsonable(event),
+                "source": event.source,
+                "source_version": event.source_version,
+                "previous_event_hash": previous_hash,
+                "event_hash": event_hash,
+            }
+            self._request("POST", "execution_events", payload)
+            self._last_event_hash = event_hash
 
     def replay(
         self,
@@ -61,7 +82,7 @@ class RuntimeEventStore:
             raise ValueError("limit must be between 1 and 5000")
         query = {
             "environment": f"eq.{self.environment}",
-            "select": "event_id,occurred_at,event_type,correlation_id,order_id,broker_order_id,position_id,payload,source,source_version,event_hash",
+            "select": "event_id,occurred_at,event_type,correlation_id,order_id,broker_order_id,position_id,payload,source,source_version,previous_event_hash,event_hash",
             "order": "occurred_at.asc",
             "limit": str(limit),
         }
@@ -105,10 +126,37 @@ class RuntimeEventStore:
         return value
 
     @classmethod
-    def _stable_hash(cls, event: RuntimeEvent) -> str:
+    def _stable_hash(cls, event: RuntimeEvent, previous_event_hash: str | None = None) -> str:
         import hashlib
-        canonical = json.dumps(cls._jsonable(event), sort_keys=True, separators=(",", ":"), default=str)
+        canonical = json.dumps(
+            {"previous_event_hash": previous_event_hash, "event": cls._jsonable(event)},
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
         return hashlib.sha256(canonical.encode()).hexdigest()
+
+    @classmethod
+    def verify_chain(cls, events: tuple[dict[str, Any], ...], *, initial_previous_hash: str | None = None) -> tuple[bool, str | None]:
+        """Verify persisted event hashes for an ordered event segment."""
+        previous = initial_previous_hash
+        for row in events:
+            payload = row.get("payload") or {}
+            event_hash = str(row.get("event_hash") or "")
+            if not event_hash:
+                return False, str(row.get("event_id") or "")
+            canonical = json.dumps(
+                {"previous_event_hash": previous, "event": payload},
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+            import hashlib
+            expected = hashlib.sha256(canonical.encode()).hexdigest()
+            if row.get("previous_event_hash") != previous or event_hash != expected:
+                return False, str(row.get("event_id") or "")
+            previous = event_hash
+        return True, previous
 
     @staticmethod
     def _correlation_id(event: RuntimeEvent) -> str:
@@ -120,8 +168,13 @@ class RuntimeEventStore:
 
 
 def attach_runtime_event_store(bus, store: RuntimeEventStore):
-    """Attach persistence as a non-critical EventBus observer."""
+    """Attach persistence as an observer; failures are recorded but do not freeze the node."""
     return bus.subscribe(None, store.append, critical=False)
 
 
-__all__ = ["RuntimeEventStore", "attach_runtime_event_store"]
+def attach_runtime_event_store_critical(bus, store: RuntimeEventStore):
+    """Attach the audit ledger as a fail-closed observer for autonomous execution."""
+    return bus.subscribe(None, store.append, critical=True)
+
+
+__all__ = ["RuntimeEventStore", "attach_runtime_event_store", "attach_runtime_event_store_critical"]
