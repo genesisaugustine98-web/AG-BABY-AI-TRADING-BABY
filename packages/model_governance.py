@@ -36,7 +36,9 @@ class ModelEvidence:
     data_fingerprint: str
     code_commit_sha: str
 
-    def complete_for_promotion(self) -> bool:
+    def complete_for_promotion(self, *, minimum_calibration_score: Decimal = Decimal("0.65")) -> bool:
+        if not (Decimal("0") <= minimum_calibration_score <= Decimal("1")):
+            raise ValueError("minimum_calibration_score must be in [0,1]")
         return all(
             (
                 self.point_in_time,
@@ -48,7 +50,7 @@ class ModelEvidence:
                 self.calibrated,
                 self.stress_tested,
                 self.demo_validated,
-                self.calibration_score >= Decimal("0.65"),
+                self.calibration_score >= minimum_calibration_score,
                 self.max_drawdown_fraction >= Decimal("0"),
                 bool(self.data_fingerprint.strip()),
                 bool(self.code_commit_sha.strip()),
@@ -91,7 +93,7 @@ class ModelGovernance:
         evidence: ModelEvidence | None = None,
     ) -> PromotionDecision:
         reasons: list[str] = []
-        if target == ModelState.DEMO and (evidence is None or not evidence.complete_for_promotion()):
+        if target == ModelState.DEMO and (evidence is None or not evidence.complete_for_promotion(minimum_calibration_score=self.minimum_calibration_score)):
             reasons.append("PROMOTION_EVIDENCE_INCOMPLETE")
         if evidence is not None and evidence.calibration_score < self.minimum_calibration_score:
             reasons.append("CALIBRATION_BELOW_PROMOTION_FLOOR")
