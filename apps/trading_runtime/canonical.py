@@ -436,14 +436,16 @@ class CanonicalTradingSystem:
 
 
 def _refresh_portfolio(runtime: DemoExecutionRuntime, portfolio: PortfolioEngine) -> None:
+    captured_at_ms = int(__import__("time").time() * 1000)
     account = runtime.gateway.account_snapshot()
+    runtime.safety.record_account_snapshot(account)
     if not bool(account.get("trade_allowed", False)):
         portfolio.freeze()
         raise RuntimeError("broker account trading is not allowed")
     equity = Decimal(str(account["equity"]))
     balance = Decimal(str(account["balance"]))
     portfolio.update_account(
-        captured_at_ms=int(__import__("time").time() * 1000),
+        captured_at_ms=captured_at_ms,
         balance=balance,
         equity=equity,
     )
@@ -454,8 +456,20 @@ def _refresh_portfolio(runtime: DemoExecutionRuntime, portfolio: PortfolioEngine
     )
     portfolio.update_positions(
         positions,
-        captured_at_ms=int(__import__("time").time() * 1000),
+        captured_at_ms=captured_at_ms,
     )
+
+    # Rebuild risk reservations from durable nonterminal orders. This prevents a
+    # process restart from forgetting risk already committed to live/pending demo orders.
+    portfolio.reset_order_risk_reservations()
+    portfolio.reset_strategy_risk()
+    if hasattr(runtime.orders, "active_order_risk_reservations"):
+        for order_id, strategy_id, risk in runtime.orders.active_order_risk_reservations():
+            portfolio.reserve_order_risk(order_id, risk)
+            portfolio.set_strategy_risk(
+                strategy_id,
+                portfolio.snapshot(captured_at_ms=captured_at_ms).strategy_risk_fraction + risk,
+            )
 
 
 def _require_demo_governance(config: CanonicalConfig, validation: TSMOMValidation) -> None:
