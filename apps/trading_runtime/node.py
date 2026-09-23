@@ -117,6 +117,7 @@ class RuntimeConfig:
     heartbeat_interval_ms: int = 5_000
     max_cycles_without_progress: int = 3
     runtime_instance_id: str = ""
+    config_fingerprint: str = ""
 
     def __post_init__(self) -> None:
         if not self.node_id.strip():
@@ -133,6 +134,8 @@ class RuntimeConfig:
             raise ValueError("max_cycles_without_progress must be >= 1")
         if self.runtime_instance_id and not self.runtime_instance_id.strip():
             raise ValueError("runtime_instance_id must be non-empty when supplied")
+        if self.config_fingerprint and not self.config_fingerprint.strip():
+            raise ValueError("config_fingerprint must be non-empty when supplied")
 
 
 class TradingNode:
@@ -172,6 +175,7 @@ class TradingNode:
         self._cycle_number = 0
         self.metrics = RuntimeMetrics()
         self.runtime_instance_id = config.runtime_instance_id.strip() or uuid4().hex
+        self.config_fingerprint = config.config_fingerprint.strip() or "UNSPECIFIED"
 
     @property
     def state(self) -> RuntimeState:
@@ -201,7 +205,7 @@ class TradingNode:
                         event_id=self._event_id(f"freeze:{self._cycle_number + 1}"),
                         occurred_at_ms=now_ms,
                         source=self.config.node_id,
-                        source_version="node-v2",
+                        source_version=f"node-v2:{self.config_fingerprint}",
                         environment=self.config.environment,
                         reason=self.supervisor.reason or type(exc).__name__,
                     )
@@ -270,7 +274,7 @@ class TradingNode:
                         event_id=self._event_id(f"forecast:{self._cycle_number}:{symbol}"),
                         occurred_at_ms=now_ms,
                         source=decision.strategy_id,
-                        source_version="controller-v2",
+                        source_version=f"controller-v2:{self.config_fingerprint}",
                         symbol=symbol,
                         forecast=decision.forecast,
                     )
@@ -327,7 +331,7 @@ class TradingNode:
                         event_id=self._event_id(f"allocation:{self._cycle_number}:{candidate.candidate_id}"),
                         occurred_at_ms=now_ms,
                         source="strategy_allocator",
-                        source_version="allocator-v1",
+                        source_version=f"allocator-v1:{self.config_fingerprint}",
                         candidate_id=candidate.candidate_id,
                         strategy_id=candidate.strategy_id,
                         symbol=candidate.instrument,
@@ -370,7 +374,7 @@ class TradingNode:
                         event_id=self._event_id(f"risk:{self._cycle_number}:{candidate.instrument}:{intent.intent_id}"),
                         occurred_at_ms=now_ms,
                         source=self.config.node_id,
-                        source_version="risk-engine-v2",
+                        source_version=f"risk-engine-v2:{self.config_fingerprint}",
                         symbol=candidate.instrument,
                         intent_id=intent.intent_id,
                         decision=attempt.risk,
@@ -381,7 +385,7 @@ class TradingNode:
                     event_id=self._event_id(f"order:{self._cycle_number}:{candidate.instrument}:{intent.intent_id}"),
                     occurred_at_ms=now_ms,
                     source=self.config.node_id,
-                    source_version="execution-boundary-v2",
+                    source_version=f"execution-boundary-v2:{self.config_fingerprint}",
                     client_order_id=deterministic_client_order_id(intent),
                     order_id=getattr(attempt, "order_id", None),
                     state=getattr(attempt, "order_state", None),
