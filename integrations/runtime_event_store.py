@@ -30,15 +30,6 @@ class RuntimeEventStore:
         self.api_key = os.environ.get("SUPABASE_SECRET_KEY", "") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
         self._chain_lock = RLock()
         self._last_event_hash: str | None = None
-        self._alert_router = None
-        if os.environ.get("AG_ALERTS_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
-            try:
-                from integrations.supabase_alert_store import SupabaseAlertSink
-                from packages.observability import RuntimeAlertRouter
-                sink = SupabaseAlertSink(environment=self.environment, timeout_seconds=min(timeout_seconds, 5.0))
-                self._alert_router = RuntimeAlertRouter(sink.emit)
-            except Exception:
-                self._alert_router = None
         if not self.base_url or not self.api_key:
             raise RuntimeError("SUPABASE_URL and server-side Supabase key are required")
         if not self.base_url.startswith("https://"):
@@ -163,11 +154,6 @@ class RuntimeEventStore:
             }
             self._request("POST", "execution_events", row)
             self._last_event_hash = event_hash
-            if self._alert_router is not None:
-                try:
-                    self._alert_router.observe(event)
-                except Exception:
-                    pass
 
     def replay(
         self,

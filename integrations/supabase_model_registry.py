@@ -6,6 +6,7 @@ import os
 import ssl
 from datetime import datetime, timezone
 import urllib.request
+import urllib.parse
 from dataclasses import asdict, is_dataclass
 from decimal import Decimal
 from enum import Enum
@@ -81,8 +82,9 @@ class SupabaseModelRegistry:
             prefer="return=minimal",
         )
 
-    def _request(self, method: str, table: str, body: Any = None, *, prefer: str | None = None) -> Any:
-        url = f"{self.base_url}/rest/v1/{table}"
+    def _request(self, method: str, table: str, body: Any = None, *, query: Mapping[str, str] | None = None, prefer: str | None = None) -> Any:
+        qs = urllib.parse.urlencode(query or {}, safe="(),.*")
+        url = f"{self.base_url}/rest/v1/{table}" + (f"?{qs}" if qs else "")
         data = None if body is None else json.dumps(body, separators=(",", ":"), default=str).encode()
         headers = {
             "apikey": self.api_key,
