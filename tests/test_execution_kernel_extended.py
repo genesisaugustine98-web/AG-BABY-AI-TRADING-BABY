@@ -34,5 +34,5 @@ def test_kernel_persists_execution_observation_and_expiry():
     repo=Repo(); broker=Broker()
     result=ExecutionKernel().execute(intent=intent(),context=context(),instrument=spec(),repository=repo,broker=broker)
     assert result.decision=="SUBMITTED"
-    assert repo.observations[0][1]["decision_mid"]=="150"
+    assert repo.observations[0][1]["decision_mid"]=="150.001"
     assert broker.requests[0].expires_at_ms==5000

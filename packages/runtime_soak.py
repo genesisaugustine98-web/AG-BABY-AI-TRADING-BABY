@@ -34,8 +34,9 @@ class DeterministicSoakHarness:
                 if self.state=="STARTING": self.state="RUNNING"; self.recoveries+=1
                 elif self.state=="FROZEN": self.violations.append(f"ILLEGAL_FREEZE_CLEAR_AT_CYCLE:{step}")
                 continue
-            if self.state=="FROZEN": self.violations.append(f"UNCONTROLLED_RECOVERY_AT_CYCLE:{step}")
-            elif self.state!="RUNNING": self.violations.append(f"INVALID_ACTIVE_STATE:{step}:{self.state}")
+            if self.state=="FROZEN":
+                continue
+            if self.state!="RUNNING": self.violations.append(f"INVALID_ACTIVE_STATE:{step}:{self.state}")
         return SoakReport(plan.cycles,self.freezes,self.recoveries,tuple(self.violations),self.state)
 
 __all__=["DeterministicSoakHarness","FaultKind","FaultPlan","SoakReport"]

@@ -124,7 +124,8 @@ class DemoOnlyMT5OrderAdapter:
                 if is_pending
                 else self._filling_mode(info)
             ),
-        }, info
+        }
+        return payload, info
 
     def _filling_mode(self, info: Any) -> int:
         """Choose a filling policy that the symbol/execution mode actually permits."""

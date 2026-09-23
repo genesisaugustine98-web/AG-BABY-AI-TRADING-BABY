@@ -6,6 +6,7 @@ with durable ingestion checkpoints when supplied. It never submits, replaces or 
 """
 from __future__ import annotations
 from dataclasses import dataclass
+import os
 from datetime import datetime, timezone
 import hashlib
 from typing import Any, Protocol
@@ -88,7 +89,8 @@ class MT5BrokerOrderEventStream:
     ) -> None:
         self.mt5 = mt5_api
         self.environment = environment.strip()
-        if self.environment != "demo":
+        execution_env = os.environ.get("EXECUTION_ENV", self.environment).strip().lower()
+        if self.environment != "demo" or execution_env != "demo":
             raise RuntimeError("MT5 broker event stream is demo-only")
         self.checkpoint_store = checkpoint_store
         self.source = source
