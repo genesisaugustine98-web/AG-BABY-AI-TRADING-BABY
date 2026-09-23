@@ -126,10 +126,8 @@ class CanonicalConfig:
     def validate(self) -> None:
         if not self.node_id:
             raise ValueError("node_id is required")
-        if self.environment not in {"demo", "paper"}:
-            raise ValueError("canonical runtime only permits demo or paper")
-        if self.allow_execution and self.environment != "demo":
-            raise ValueError("broker execution is only permitted in demo environment")
+        if self.environment != "demo":
+            raise ValueError("canonical MT5 runtime only permits the demo environment")
         if self.timeframe != "H1":
             raise ValueError("canonical MT5 strategy entrypoint currently requires H1")
         if self.bars_per_symbol < 100:
@@ -376,6 +374,8 @@ class CanonicalTradingSystem:
             self.node.start()
 
     def run(self, *, max_cycles: int | None = None) -> None:
+        if max_cycles is not None and max_cycles < 1:
+            raise ValueError("max_cycles must be >= 1 when supplied")
         self.start()
         count = 0
         try:
