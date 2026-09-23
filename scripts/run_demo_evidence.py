@@ -21,7 +21,8 @@ class AmbiguousDemoBroker:
     def submit(self,request): self.adapter.submit(request); raise RuntimeError("INJECTED_CRASH_AFTER_BROKER_SUBMIT")
 
 def strategy(api,symbol,commit):
-    rows=list(MT5RuntimeAdapter.__new__(MT5RuntimeAdapter).market_data.fetch_completed_bars(symbol=symbol,timeframe="H1",count=20000))
+    from apps.execution_gateway.mt5_market_data import MT5MarketDataAdapter
+    rows=list(MT5MarketDataAdapter(api).fetch_completed_bars(symbol=symbol,timeframe="H1",count=20000))
     if len(rows)<500: raise RuntimeError(f"insufficient bars:{symbol}:{len(rows)}")
     fp=dataset_fingerprint(rows); model=TSMOMForecastModel(lookback_bars=24,horizon_bars=6,min_training_samples=30,bar_interval_seconds=3600)
     val=model.fit(rows,dataset_fingerprint=fp,code_commit_sha=commit); splits=chronological_split_indices(len(rows)); costs=(Decimal("0"),Decimal("1"),Decimal("2"),Decimal("5"),Decimal("10"))
@@ -46,6 +47,17 @@ def main()->int:
     gw=DemoOnlyMT5Gateway(); gw.connect_and_verify_demo(); rt=None
     try:
         rt=DemoExecutionRuntime.create(); api=gw.mt5_api(); pack=EvidencePack.create(commit_sha=a.commit_sha)
+        required_live = (
+            ("demo_24h_soak","continuous demo observation", a.duration_minutes>=1440),
+            ("demo_reconciliation_drift","intentional broker/internal mismatch with observed freeze", False),
+            ("demo_unknown_recovery","ambiguous demo submission resolved from broker truth", a.real_demo_order_drill),
+            ("demo_restart_recovery","fresh process restart followed by clean reconciliation", False),
+            ("demo_network_outage","real transport outage drill", False),
+            ("demo_database_outage","real database outage drill", False),
+        )
+        for name, requirement, observed in required_live:
+            if not observed:
+                pack.add(name=name,evidence_class=EvidenceClass.LIVE_DEMO,status=EvidenceStatus.UNOBSERVED,details={"requirement":requirement})
         started=time.time(); cycles=0; errors=0; events=0
         while time.time()-started < a.duration_minutes*60:
             cycles+=1
@@ -55,18 +67,28 @@ def main()->int:
             except Exception: errors+=1
             time.sleep(a.interval_seconds)
         soak_name="demo_24h_soak" if a.duration_minutes>=1440 else "demo_soak_observation"
-        pack.add(name=soak_name,evidence_class=EvidenceClass.LIVE_DEMO,status=EvidenceStatus.PASS if cycles and errors==0 else EvidenceStatus.FAIL,details={"duration_minutes":a.duration_minutes,"cycles":cycles,"errors":errors,"broker_order_events":events})
-        pack.add(name="demo_network_outage",evidence_class=EvidenceClass.SIMULATED,status=EvidenceStatus.PASS,details={"basis":"runtime fault harness exercises transport failure"},required_for_gate=False)
-        pack.add(name="demo_database_outage",evidence_class=EvidenceClass.SIMULATED,status=EvidenceStatus.PASS,details={"basis":"runtime fault harness exercises durable-store failure"},required_for_gate=False)
+        if soak_name=="demo_24h_soak":
+            for idx,row in enumerate(pack.records):
+                if row.name=="demo_24h_soak":
+                    pack.records[idx]=type(row)(name=row.name,evidence_class=row.evidence_class,status=EvidenceStatus.PASS if cycles and errors==0 else EvidenceStatus.FAIL,observed_at=row.observed_at,details={"duration_minutes":a.duration_minutes,"cycles":cycles,"errors":errors,"broker_order_events":events},artifact=row.artifact,required_for_gate=True)
+                    break
+        else:
+            pack.add(name=soak_name,evidence_class=EvidenceClass.LIVE_DEMO,status=EvidenceStatus.PASS if cycles and errors==0 else EvidenceStatus.FAIL,details={"duration_minutes":a.duration_minutes,"cycles":cycles,"errors":errors,"broker_order_events":events},required_for_gate=False)
         if a.real_demo_order_drill:
             mt5r=MT5RuntimeAdapter(gw); symbol=symbols[0]; now=int(time.time()*1000); q=mt5r.quote(symbol,now_ms=now); spec=mt5r.instrument_spec(symbol); acct=gw.account_snapshot(); qty=spec.min_volume; dist=max(q.mid*Decimal("0.01"),spec.tick_size*10); limit=q.mid-dist*Decimal("2")
             intent=TradeIntent("evidence-"+str(now),"demo-evidence","1","evidence",symbol,"BUY",qty,"LIMIT",limit,limit-dist,limit+dist*2,now,now+300000,Decimal("0.01"),Decimal("0.0001"),300,frozenset())
             ctx=AdmissionContext(now,q,Forecast("evidence","1",now,300,Decimal("0.01"),"fraction",Decimal("0.99"),Decimal("0.99"),Decimal("0.99")),MarketState(EventState.NORMAL,max(0,now-q.event_time_ms),q.spread/q.mid,Decimal("1"),Decimal("0"),Decimal("1"),Decimal("1")),PortfolioState(Decimal(str(acct["equity"])),Decimal("0"),Decimal("0"),Decimal("0"),0,Decimal("0"),Decimal("0"),False),Decimal("0.0001"),Decimal("0"))
             attempt=rt.kernel.execute(intent=intent,context=ctx,instrument=spec,repository=rt.orders,broker=AmbiguousDemoBroker(DemoOnlyMT5OrderAdapter(api)))
             recovered=rt.recover(order_id=attempt.order_id,client_order_id=attempt.client_order_id) if attempt.order_id else None
-            pack.add(name="demo_unknown_recovery",evidence_class=EvidenceClass.LIVE_DEMO,status=EvidenceStatus.PASS if attempt.decision=="UNKNOWN" and recovered and recovered.outcome=="ACCEPTED" else EvidenceStatus.FAIL,details={"initial":attempt.decision,"recovery":None if recovered is None else recovered.outcome,"broker_order_id":None if recovered is None else recovered.broker_order_id})
+            status=EvidenceStatus.PASS if attempt.decision=="UNKNOWN" and recovered and recovered.outcome=="ACCEPTED" else EvidenceStatus.FAIL
+            for idx,row in enumerate(pack.records):
+                if row.name=="demo_unknown_recovery":
+                    pack.records[idx]=type(row)(name=row.name,evidence_class=row.evidence_class,status=status,observed_at=row.observed_at,details={"initial":attempt.decision,"recovery":None if recovered is None else recovered.outcome,"broker_order_id":None if recovered is None else recovered.broker_order_id},artifact=row.artifact,required_for_gate=True)
+                    break
             if recovered and recovered.broker_order_id:
                 cleanup=rt.cancel_order(order_id=attempt.order_id); pack.add(name="demo_order_drill_cleanup",evidence_class=EvidenceClass.LIVE_DEMO,status=EvidenceStatus.PASS if cleanup.allowed else EvidenceStatus.FAIL,details={"cancel":None if cleanup.result is None else cleanup.result.outcome},required_for_gate=False)
+        if a.duration_minutes<1440:
+            pack.add(name="demo_24h_soak_remaining",evidence_class=EvidenceClass.LIVE_DEMO,status=EvidenceStatus.UNOBSERVED,details={"requirement":"run this collector with --duration-minutes 1440"},required_for_gate=False)
         strat={}
         for s in symbols:
             try: strat[s]=strategy(api,s,a.commit_sha)
