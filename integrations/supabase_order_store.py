@@ -127,6 +127,33 @@ class SupabaseOrderStore(InternalOrderResolver):
         self._request("POST", "execution_orders", body=payload, prefer="return=minimal")
         return self.get(order_id)
 
+    def active_order_risk_reservations(self) -> tuple[tuple[str, str, Decimal], ...]:
+        """Return nonterminal durable order risk reservations for restart recovery."""
+        rows = self._request(
+            "GET",
+            "execution_orders",
+            query={
+                "environment": f"eq.{self.environment}",
+                "is_test_fixture": "eq.false",
+                "state": "not.in.(FILLED,REJECTED,CANCELLED,CANCELED)",
+                "select": "order_id,metadata",
+            },
+        ) or []
+        reservations: list[tuple[str, str, Decimal]] = []
+        for row in rows:
+            metadata = row.get("metadata") or {}
+            if not isinstance(metadata, Mapping):
+                continue
+            raw = metadata.get("risk_fraction")
+            strategy_id = str(metadata.get("strategy_id") or "").strip()
+            if raw is None or not strategy_id:
+                continue
+            risk = Decimal(str(raw))
+            if not risk.is_finite() or risk < 0 or risk > Decimal("1"):
+                raise RuntimeError(f"invalid durable risk reservation:{row.get('order_id')}")
+            reservations.append((str(row["order_id"]), strategy_id, risk))
+        return tuple(reservations)
+
     def get(self, order_id: str) -> DurableOrder:
         order_id = _required(order_id, "order_id")
         rows = self._request(
