@@ -26,6 +26,9 @@ class PortfolioRiskLimits:
     max_abs_net_notional_fraction: Decimal = Decimal("0.50")
     max_margin_fraction: Decimal = Decimal("0.50")
     max_portfolio_volatility: Decimal = Decimal("0.20")
+    max_abs_beta_exposure: Decimal = Decimal("0.25")
+    require_complete_correlation: bool = True
+    conservative_unknown_correlation: Decimal = Decimal("0.75")
 
 
 @dataclass(frozen=True)
@@ -47,7 +50,9 @@ class PortfolioRiskEngine:
     def _corr(a: str, b: str, matrix: Mapping[tuple[str, str], Decimal]) -> Decimal:
         if a == b:
             return Decimal("1")
-        value = matrix.get((a, b), matrix.get((b, a), Decimal("0")))
+        value = matrix.get((a, b), matrix.get((b, a)))
+        if value is None:
+            return Decimal("0.75")
         return max(Decimal("-1"), min(Decimal("1"), Decimal(str(value))))
 
     def evaluate(
@@ -71,6 +76,9 @@ class PortfolioRiskEngine:
         variance = Decimal("0")
         for i, left in enumerate(exposures):
             for j, right in enumerate(exposures):
+                if i < j and left.instrument != right.instrument and (left.instrument, right.instrument) not in correlation and (right.instrument, left.instrument) not in correlation:
+                    if self.limits.require_complete_correlation:
+                        reasons.append("PORTFOLIO_CORRELATION_INPUT_MISSING")
                 corr = self._corr(left.instrument, right.instrument, correlation)
                 variance += (
                     weights[i]
@@ -94,6 +102,8 @@ class PortfolioRiskEngine:
             reasons.append("PORTFOLIO_MARGIN_LIMIT")
         if portfolio_vol > self.limits.max_portfolio_volatility:
             reasons.append("PORTFOLIO_VOLATILITY_LIMIT")
+        if abs(beta) > self.limits.max_abs_beta_exposure:
+            reasons.append("PORTFOLIO_BETA_LIMIT")
 
         return PortfolioRiskDecision(
             not reasons,
