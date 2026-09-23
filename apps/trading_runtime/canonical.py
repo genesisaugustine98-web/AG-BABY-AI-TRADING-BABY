@@ -198,6 +198,12 @@ class CanonicalMarketStateFactory:
         self.max_quote_age_ms = max_quote_age_ms
 
     def __call__(self, *, quote, now_ms: int) -> MarketState:
+        if quote.bid <= 0 or quote.ask <= 0:
+            raise RuntimeError("non-positive broker quote")
+        if quote.ask < quote.bid:
+            raise RuntimeError("crossed broker quote")
+        if not str(quote.source).strip():
+            raise RuntimeError("quote source is required")
         age = now_ms - quote.event_time_ms
         spread_fraction = quote.spread / quote.mid
         if age < 0:
