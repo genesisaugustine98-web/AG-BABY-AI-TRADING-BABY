@@ -36,6 +36,40 @@ class RuntimeEventStore:
             raise RuntimeError("SUPABASE_URL must use https")
 
     def append(self, event: RuntimeEvent) -> None:
+        self.append_record(
+            event_id=event.event_id,
+            occurred_at_ms=event.occurred_at_ms,
+            event_type=type(event).__name__,
+            correlation_id=self._correlation_id(event),
+            intent_id=getattr(event, "intent_id", None),
+            order_id=getattr(event, "order_id", None),
+            broker_order_id=getattr(event, "broker_order_id", None),
+            position_id=None,
+            payload=self._jsonable(event),
+            source=event.source,
+            source_version=event.source_version,
+        )
+
+    def append_record(
+        self,
+        *,
+        event_id: str,
+        occurred_at_ms: int,
+        event_type: str,
+        correlation_id: str,
+        payload: Any,
+        source: str,
+        source_version: str,
+        intent_id: str | None = None,
+        order_id: str | None = None,
+        broker_order_id: str | None = None,
+        position_id: str | None = None,
+    ) -> None:
+        if not event_id.strip() or occurred_at_ms <= 0 or not event_type.strip() or not correlation_id.strip():
+            raise ValueError("event identity and occurrence metadata are required")
+        if not source.strip() or not source_version.strip():
+            raise ValueError("event provenance is required")
+
         with self._chain_lock:
             if self._last_event_hash is None:
                 rows = self._request(
@@ -45,50 +79,80 @@ class RuntimeEventStore:
                         "environment": f"eq.{self.environment}",
                         "select": "event_hash",
                         "event_hash": "not.is.null",
-                        "order": "occurred_at.desc,event_id.desc",
+                        "order": "created_at.desc,event_id.desc",
                         "limit": "1",
                     },
                 ) or []
                 self._last_event_hash = str(rows[0]["event_hash"]) if rows else None
 
-            db_event_id = self._db_event_id(event.event_id)
+            db_event_id = self._db_event_id(event_id)
             existing = self._request(
                 "GET",
                 "execution_events",
                 query={
                     "event_id": f"eq.{db_event_id}",
                     "environment": f"eq.{self.environment}",
-                    "select": "event_hash,previous_event_hash",
+                    "select": "event_hash,previous_event_hash,event_type,correlation_id,intent_id,order_id,broker_order_id,position_id,payload,source,source_version,occurred_at",
                     "limit": "1",
                 },
             ) or []
             if existing:
                 row = existing[0]
                 previous_hash = row.get("previous_event_hash")
-                expected = self._stable_hash(event, previous_hash)
+                expected = self._stable_record_hash(
+                    event_id=db_event_id,
+                    occurred_at=str(row.get("occurred_at") or ""),
+                    environment=self.environment,
+                    event_type=str(row.get("event_type") or ""),
+                    correlation_id=str(row.get("correlation_id") or ""),
+                    intent_id=row.get("intent_id"),
+                    order_id=row.get("order_id"),
+                    broker_order_id=row.get("broker_order_id"),
+                    position_id=row.get("position_id"),
+                    payload=row.get("payload") or {},
+                    source=str(row.get("source") or ""),
+                    source_version=str(row.get("source_version") or ""),
+                    previous_event_hash=previous_hash,
+                )
                 if str(row.get("event_hash") or "") != expected:
-                    raise RuntimeError(f"runtime event id collision or tamper:{event.event_id}")
+                    raise RuntimeError(f"runtime event id collision or tamper:{event_id}")
                 return
 
+            occurred_at = datetime.fromtimestamp(occurred_at_ms / 1000, tz=timezone.utc).isoformat()
             previous_hash = self._last_event_hash
-            event_hash = self._stable_hash(event, previous_hash)
-            payload = {
+            db_event_id = self._db_event_id(event_id)
+            event_hash = self._stable_record_hash(
+                event_id=db_event_id,
+                occurred_at=occurred_at,
+                environment=self.environment,
+                event_type=event_type,
+                correlation_id=correlation_id,
+                intent_id=intent_id,
+                order_id=order_id,
+                broker_order_id=broker_order_id,
+                position_id=position_id,
+                payload=self._jsonable(payload),
+                source=source,
+                source_version=source_version,
+                previous_event_hash=previous_hash,
+            )
+            row = {
                 "event_id": db_event_id,
-                "occurred_at": datetime.fromtimestamp(event.occurred_at_ms / 1000, tz=timezone.utc).isoformat(),
+                "occurred_at": occurred_at,
                 "environment": self.environment,
-                "event_type": type(event).__name__,
-                "correlation_id": self._correlation_id(event),
-                "intent_id": getattr(event, "intent_id", None),
-                "order_id": getattr(event, "order_id", None),
-                "broker_order_id": getattr(event, "broker_order_id", None),
-                "position_id": None,
-                "payload": self._jsonable(event),
-                "source": event.source,
-                "source_version": event.source_version,
+                "event_type": event_type,
+                "correlation_id": correlation_id,
+                "intent_id": intent_id,
+                "order_id": order_id,
+                "broker_order_id": broker_order_id,
+                "position_id": position_id,
+                "payload": self._jsonable(payload),
+                "source": source,
+                "source_version": source_version,
                 "previous_event_hash": previous_hash,
                 "event_hash": event_hash,
             }
-            self._request("POST", "execution_events", payload)
+            self._request("POST", "execution_events", row)
             self._last_event_hash = event_hash
 
     def replay(
@@ -102,8 +166,8 @@ class RuntimeEventStore:
             raise ValueError("limit must be between 1 and 5000")
         query = {
             "environment": f"eq.{self.environment}",
-            "select": "event_id,occurred_at,event_type,correlation_id,order_id,broker_order_id,position_id,payload,source,source_version,previous_event_hash,event_hash",
-            "order": "occurred_at.asc",
+            "select": "event_id,occurred_at,environment,event_type,correlation_id,intent_id,order_id,broker_order_id,position_id,payload,source,source_version,previous_event_hash,event_hash",
+            "order": "created_at.asc,event_id.asc",
             "limit": str(limit),
         }
         if event_type:
@@ -151,10 +215,40 @@ class RuntimeEventStore:
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"ag-runtime-event:{event_id}"))
 
     @classmethod
-    def _stable_hash(cls, event: RuntimeEvent, previous_event_hash: str | None = None) -> str:
+    def _stable_record_hash(
+        cls,
+        *,
+        event_id: str,
+        occurred_at: str,
+        environment: str,
+        event_type: str,
+        correlation_id: str,
+        intent_id: str | None,
+        order_id: str | None,
+        broker_order_id: str | None,
+        position_id: str | None,
+        payload: Any,
+        source: str,
+        source_version: str,
+        previous_event_hash: str | None,
+    ) -> str:
         import hashlib
         canonical = json.dumps(
-            {"previous_event_hash": previous_event_hash, "event": cls._jsonable(event)},
+            {
+                "event_id": event_id,
+                "occurred_at": occurred_at,
+                "environment": environment,
+                "event_type": event_type,
+                "correlation_id": correlation_id,
+                "intent_id": intent_id,
+                "order_id": order_id,
+                "broker_order_id": broker_order_id,
+                "position_id": position_id,
+                "payload": payload,
+                "source": source,
+                "source_version": source_version,
+                "previous_event_hash": previous_event_hash,
+            },
             sort_keys=True,
             separators=(",", ":"),
             default=str,
@@ -162,22 +256,51 @@ class RuntimeEventStore:
         return hashlib.sha256(canonical.encode()).hexdigest()
 
     @classmethod
-    def verify_chain(cls, events: tuple[dict[str, Any], ...], *, initial_previous_hash: str | None = None) -> tuple[bool, str | None]:
-        """Verify persisted event hashes for an ordered event segment."""
+    def _stable_hash(cls, event: RuntimeEvent, previous_event_hash: str | None = None) -> str:
+        return cls._stable_record_hash(
+            event_id=cls._db_event_id(event.event_id),
+            occurred_at=datetime.fromtimestamp(event.occurred_at_ms / 1000, tz=timezone.utc).isoformat(),
+            environment="runtime",
+            event_type=type(event).__name__,
+            correlation_id=cls._correlation_id(event),
+            intent_id=getattr(event, "intent_id", None),
+            order_id=getattr(event, "order_id", None),
+            broker_order_id=getattr(event, "broker_order_id", None),
+            position_id=None,
+            payload=cls._jsonable(event),
+            source=event.source,
+            source_version=event.source_version,
+            previous_event_hash=previous_event_hash,
+        )
+
+    @classmethod
+    def verify_chain(
+        cls,
+        events: tuple[dict[str, Any], ...],
+        *,
+        initial_previous_hash: str | None = None,
+    ) -> tuple[bool, str | None]:
+        """Verify the full persisted event envelope for an ordered event segment."""
         previous = initial_previous_hash
         for row in events:
-            payload = row.get("payload") or {}
             event_hash = str(row.get("event_hash") or "")
             if not event_hash:
                 return False, str(row.get("event_id") or "")
-            canonical = json.dumps(
-                {"previous_event_hash": previous, "event": payload},
-                sort_keys=True,
-                separators=(",", ":"),
-                default=str,
+            expected = cls._stable_record_hash(
+                event_id=str(row.get("event_id") or ""),
+                occurred_at=str(row.get("occurred_at") or ""),
+                environment=str(row.get("environment") or ""),
+                event_type=str(row.get("event_type") or ""),
+                correlation_id=str(row.get("correlation_id") or ""),
+                intent_id=row.get("intent_id"),
+                order_id=row.get("order_id"),
+                broker_order_id=row.get("broker_order_id"),
+                position_id=row.get("position_id"),
+                payload=row.get("payload") or {},
+                source=str(row.get("source") or ""),
+                source_version=str(row.get("source_version") or ""),
+                previous_event_hash=previous,
             )
-            import hashlib
-            expected = hashlib.sha256(canonical.encode()).hexdigest()
             if row.get("previous_event_hash") != previous or event_hash != expected:
                 return False, str(row.get("event_id") or "")
             previous = event_hash
