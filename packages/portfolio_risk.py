@@ -88,9 +88,14 @@ class PortfolioRiskEngine:
         variance = Decimal("0")
         for i, left in enumerate(exposures):
             for j, right in enumerate(exposures):
-                if i < j and left.instrument != right.instrument and (left.instrument, right.instrument) not in correlation and (right.instrument, left.instrument) not in correlation:
-                    if self.limits.require_complete_correlation:
-                        reasons.append("PORTFOLIO_CORRELATION_INPUT_MISSING")
+                if (
+                    i < j
+                    and left.instrument != right.instrument
+                    and (left.instrument, right.instrument) not in correlation
+                    and (right.instrument, left.instrument) not in correlation
+                    and self.limits.require_complete_correlation
+                ):
+                    reasons.append("PORTFOLIO_CORRELATION_INPUT_MISSING")
                 corr = self._corr(left.instrument, right.instrument, correlation)
                 variance += (
                     weights[i]
