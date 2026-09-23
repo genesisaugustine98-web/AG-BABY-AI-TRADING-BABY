@@ -25,6 +25,9 @@ class Reconciliation:
     def __init__(self, permitted):
         self.trading_permitted = permitted
 
+    def reconcile_once(self):
+        return type("ReconciliationResult", (), {"freeze_required": not self.trading_permitted})()
+
 
 class Kernel:
     def __init__(self):
