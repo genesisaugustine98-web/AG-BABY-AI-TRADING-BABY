@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import ssl
-import urllib.parse
 import urllib.request
 from dataclasses import asdict, is_dataclass
 from decimal import Decimal
@@ -43,8 +42,6 @@ class SupabaseModelRegistry:
         self._request("POST", "model_registry", payload, prefer="resolution=merge-duplicates,return=minimal")
 
     def _request(self, method: str, table: str, body: Any = None, *, prefer: str | None = None) -> Any:
-        qs = urllib.parse.urlencode({})
-        del qs
         url = f"{self.base_url}/rest/v1/{table}"
         data = None if body is None else json.dumps(body, separators=(",", ":"), default=str).encode()
         headers = {
