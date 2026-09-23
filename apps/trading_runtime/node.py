@@ -393,8 +393,8 @@ class TradingNode:
         )
 
     def _publish_heartbeat(self, now_ms: int) -> None:
-        health = self.supervisor.health(now_ms)
         self.supervisor.heartbeat(now_ms)
+        health = self.supervisor.health(now_ms)
         self.events.publish(
             HeartbeatEvent(
                 event_id=f"{self.config.node_id}:heartbeat:{self._cycle_number}",
