@@ -23,11 +23,13 @@ Live trading is disabled. MT5 submission is demo-only and the kernel itself acce
 - Deterministic executable-edge opportunity candidates.
 - Deterministic portfolio/order risk gates with explicit health, drawdown, loss and position limits.
 - Durable internal-order repository with environment-scoped identity.
-- Demo-only MT5 order validation, `order_check`, `order_send`, bounded UNKNOWN recovery and cancel support.
+- Demo-only MT5 order validation, `order_check`, `order_send`, bounded UNKNOWN recovery, cancel, pending replace and explicit expiry controls.
 - Actual MT5 deal-history ingestion with explicit internal-order binding and restart-safe watermarks.
-- Atomic broker-confirmed fill accounting in Supabase, including immutable fills, positions and audit events.
+- Atomic broker-confirmed fill accounting in Supabase, including immutable fills, positions, audit events and execution TCA.
 - Broker reconciliation with persistent freeze/unfreeze control state.
 - Broker account snapshots and an authenticated, read-only Next.js operations cockpit.
+- Deterministic demo/paper parity checks, fault/soak harnesses, persistent model surveillance/retirement and centralized runtime alerts.
+- Restart-aware MT5 broker-order event stream facade and fail-closed cross-currency portfolio valuation.
 - CI covering Python safety tests plus Next.js lint/build.
 
 ## Repository structure
@@ -87,3 +89,16 @@ python -m apps.trading_runtime
 ~~~
 
 That process binds MT5 market data, per-symbol TSMOM models, evidence-gated model governance, correlation-aware portfolio allocation, deterministic policy/risk, durable order identity, broker reconciliation, tamper-evident runtime events, fenced multi-host ownership, execution circuit breakers, localhost health/Prometheus telemetry, lifecycle supervision, host singleton control, and fail-safe shutdown. Execution remains explicitly demo-only; credentials stay in server-side environment variables. Deployment details are in `docs/CANONICAL_RUNTIME.md`, and the institutional operating contract is in `docs/INSTITUTIONAL_RUNTIME.md`.
+
+
+## New operator controls
+
+Set AG_ALERTS_ENABLED=true to persist critical runtime safety alerts; optionally set AG_ALERT_WEBHOOK_URL=https://... for secondary HTTPS fan-out. The database remains the authoritative alert sink.
+
+For non-USD instruments, configure AG_PORTFOLIO_FX_SYMBOLS with the broker symbols that provide current USD conversion paths. Missing conversion data is rejected rather than estimated.
+
+The event-stream facade is available from the demo runtime through poll_broker_events(). It is restart-aware and can use the existing Supabase ingestion checkpoint, but the MT5 Python API underneath remains polling-based.
+
+Model surveillance is available through ModelSurveillanceService; consecutive breaches are persisted and a retired model is not automatically reactivated.
+
+All of these additions remain below the same hard boundary: live capital execution is disabled.

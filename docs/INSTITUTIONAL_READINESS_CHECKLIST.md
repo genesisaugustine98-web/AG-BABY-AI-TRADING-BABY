@@ -40,6 +40,7 @@ This checklist separates software correctness from economic evidence. A green so
 - [ ] Beta limit passes when beta data is configured.
 - [ ] Required pairwise correlations are available.
 - [ ] No unsupported currency conversion is accepted.
+- [ ] Required non-USD conversion symbols are configured when cross-currency exposures exist.
 
 ## Gate 4 — Ownership and audit
 
@@ -49,6 +50,9 @@ This checklist separates software correctness from economic evidence. A green so
 - [ ] Runtime event hash chain verifies for the recovery window.
 - [ ] Runtime instance ID is unique.
 - [ ] Configuration fingerprint is stable for the run.
+- [ ] Runtime safety alerts are durably persisted when alerting is enabled.
+- [ ] Model surveillance state survives restart from durable observation history.
+- [ ] Execution TCA is populated from confirmed fills when decision-mid telemetry exists.
 - [ ] Model/dataset/feature/code lineage is persisted.
 
 ## Gate 5 — Reliability evidence

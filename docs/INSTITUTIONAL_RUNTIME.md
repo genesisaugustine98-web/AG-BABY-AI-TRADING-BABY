@@ -224,20 +224,25 @@ Before any capital authorization, require:
 
 Demo success is an engineering signal, not proof of economic edge.
 
-## 12. Current maturity boundary
+## 12. Control-plane hardening extensions
 
-The current system is a credible autonomous demo execution platform with strong control-plane foundations.
+The runtime now includes several additional non-capital controls:
 
-It is not yet a fully operational institutional trading desk because the following still require evidence or further integration:
+- pending-order expiration is carried from intent to MT5 ORDER_TIME_SPECIFIED where supported;
+- pending-order replace uses MT5 TRADE_ACTION_MODIFY only after durable-state validation and active-order truth;
+- explicit expiry/cancel outcomes are persisted without inventing unsupported lifecycle state names;
+- confirmed fills generate durable transaction-cost analysis (signed slippage, spread, commission, financing and implementation shortfall);
+- demo/paper execution contracts have deterministic parity fingerprints for CI/replay comparison;
+- deterministic fault/soak harnesses enforce freeze/restart/reconciliation recovery invariants;
+- runtime freezes, UNKNOWN execution outcomes, degraded reconciliation and unhealthy heartbeats can fan out to durable alerts and an optional HTTPS webhook;
+- model surveillance has persistent breach streaks, durable observations, and an irreversible retired state once the configured threshold is reached;
+- non-USD portfolio valuation supports direct, inverse and bounded cross-currency conversion through explicitly configured broker quotes;
+- MT5 order updates can be consumed through a restart-aware polling event-stream facade backed by the existing ingestion checkpoint infrastructure.
 
-- streaming broker/user-event infrastructure beyond polling
-- complete integration of raw portfolio notionals with the allocation risk layer
-- persisted model promotion/retirement workflow across the entire lifecycle
-- full cancel/replace/expire execution adapters
-- external alert routing and tracing
-- long-duration soak results
-- independent disaster-recovery exercises
-- strategy profitability evidence across sufficiently independent samples
-- formal change-management and capital-authorization process
+### 12.1 Remaining evidence boundary
 
-These are explicit boundaries, not hidden assumptions.
+The Python MetaTrader5 integration remains polling-based; the repository does not claim a broker WebSocket/server-push feed. The event-stream facade prevents the rest of the control plane from being coupled to raw polling, while a true push bridge remains an integration option outside the current API.
+
+Long-duration demo soak, independent disaster-recovery exercises, and strategy-economics evidence still require real-world test execution. Those are evidence tasks, not missing safety mechanisms.
+
+The live-capital path remains structurally disabled and is intentionally excluded from this project boundary.
