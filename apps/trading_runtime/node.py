@@ -1,9 +1,9 @@
-"""Counterpart-style long-running trading node.
+"""Canonical long-running trading node.
 
-The node owns lifecycle, scheduling, event publication and strategy orchestration.
-Strategy controllers produce candidates; policy/risk/execution remain the protected
-boundary. Execution is opt-in and the repository's execution runtime still enforces
-demo/paper restrictions.
+The node owns lifecycle, scheduling and event publication. Strategy controllers only produce
+auditable candidates; allocation happens before any order context is built; policy/risk and
+durable execution remain the protected boundary. The runtime environment is restricted to
+demo/paper by configuration and the execution gateway separately enforces demo-only broker use.
 """
 from __future__ import annotations
 
@@ -14,19 +14,22 @@ from typing import Callable, Protocol
 
 from packages.event_bus import EventBus
 from packages.events import (
+    AllocationDecisionEvent,
     ForecastEvent,
     FreezeEvent,
     HeartbeatEvent,
     MarketQuoteEvent,
     OpportunityEvent,
-    RiskDecisionEvent,
     OrderLifecycleEvent,
+    RiskDecisionEvent,
     StrategyDecision,
 )
 from packages.demo_execution import deterministic_client_order_id
 from packages.models import AdmissionContext, InstrumentSpec, MarketState, TradeIntent
+from packages.opportunity import OpportunityCandidate
 from packages.runtime_metrics import RuntimeMetrics
 from packages.runtime_supervisor import RuntimeState, RuntimeSupervisor
+from packages.strategy_allocator import AllocationResult
 from packages.strategy_controller import StrategyController
 
 
@@ -54,6 +57,16 @@ class ExecutionSink(Protocol):
         context: AdmissionContext,
         instrument: InstrumentSpec,
     ):
+        ...
+
+
+class CandidateAllocator(Protocol):
+    def allocate(
+        self,
+        *,
+        candidates: tuple[OpportunityCandidate, ...],
+        strategy_order: tuple[str, ...],
+    ) -> AllocationResult:
         ...
 
 
@@ -116,10 +129,14 @@ class TradingNode:
         context_factory: IntentContextFactory,
         execution: ExecutionSink | None = None,
         market_state_factory: MarketStateFactory | None = None,
+        allocator: CandidateAllocator | None = None,
+        strategy_order: tuple[str, ...] = (),
         clock: Clock | None = None,
         event_bus: EventBus | None = None,
         supervisor: RuntimeSupervisor | None = None,
     ) -> None:
+        if not controllers:
+            raise ValueError("at least one strategy controller is required")
         if config.allow_execution and execution is None:
             raise ValueError("execution sink is required when allow_execution=true")
         self.config = config
@@ -128,6 +145,8 @@ class TradingNode:
         self.context_factory = context_factory
         self.execution = execution
         self.market_state_factory = market_state_factory
+        self.allocator = allocator
+        self.strategy_order = strategy_order or tuple(c.strategy_id for c in controllers)
         self.clock = clock or SystemClock()
         self.events = event_bus or EventBus()
         self.supervisor = supervisor or RuntimeSupervisor(
@@ -154,8 +173,7 @@ class TradingNode:
         failures_before = len(self.events.failures())
         try:
             self.supervisor.assert_operational(now_ms)
-            result = self._cycle_once(now_ms)
-            return result
+            return self._cycle_once(now_ms)
         except Exception as exc:
             self.metrics.record_cycle_failure()
             self.supervisor.freeze(f"CYCLE_ERROR:{type(exc).__name__}")
@@ -166,7 +184,7 @@ class TradingNode:
                         event_id=f"{self.config.node_id}:freeze:{self._cycle_number + 1}",
                         occurred_at_ms=now_ms,
                         source=self.config.node_id,
-                        source_version="node-v1",
+                        source_version="node-v2",
                         environment=self.config.environment,
                         reason=self.supervisor.reason or type(exc).__name__,
                     )
@@ -180,6 +198,7 @@ class TradingNode:
     def _cycle_once(self, now_ms: int) -> tuple[object, ...]:
         self._cycle_number += 1
         results: list[object] = []
+        decisions: list[tuple[StrategyDecision, object, MarketState]] = []
 
         for controller in self.controllers:
             symbols = tuple(getattr(controller, "symbols", ()))
@@ -195,7 +214,7 @@ class TradingNode:
                         event_id=f"{self.config.node_id}:quote:{self._cycle_number}:{symbol}",
                         occurred_at_ms=now_ms,
                         source="trading_node",
-                        source_version="node-v1",
+                        source_version="node-v2",
                         symbol=symbol,
                         bid=str(quote.bid),
                         ask=str(quote.ask),
@@ -203,29 +222,21 @@ class TradingNode:
                         usable_at_ms=quote.event_time_ms,
                     )
                 )
+                quote_age_ms = now_ms - quote.event_time_ms
+                if quote_age_ms < 0:
+                    self.supervisor.freeze(f"FUTURE_QUOTE:{symbol}")
+                    raise RuntimeError(f"future broker quote:{symbol}")
+
                 bars = self.market_data.completed_bars(
                     symbol=symbol,
                     timeframe=self.config.timeframe,
                     count=self.config.bars_per_symbol,
                 )
-
-                quote_age_ms = now_ms - quote.event_time_ms
-                if quote_age_ms < 0:
-                    self.supervisor.freeze(f"FUTURE_QUOTE:{symbol}")
-                    raise RuntimeError(f"future broker quote:{symbol}")
-                if self.market_state_factory is not None:
-                    market = self.market_state_factory(quote=quote, now_ms=now_ms)
-                else:
-                    from packages.models import EventState
-                    market = MarketState(
-                        EventState.NORMAL,
-                        quote_age_ms,
-                        (quote.ask - quote.bid) / quote.mid,
-                        Decimal("0"),
-                        Decimal("0"),
-                        Decimal("0"),
-                        Decimal("0"),
-                    )
+                market = (
+                    self.market_state_factory(quote=quote, now_ms=now_ms)
+                    if self.market_state_factory is not None
+                    else self._safe_default_market(quote, quote_age_ms)
+                )
                 decision = controller.evaluate(
                     symbol=symbol,
                     bars=bars,
@@ -242,7 +253,7 @@ class TradingNode:
                         event_id=f"{self.config.node_id}:forecast:{self._cycle_number}:{symbol}",
                         occurred_at_ms=now_ms,
                         source=decision.strategy_id,
-                        source_version="controller-v1",
+                        source_version="controller-v2",
                         symbol=symbol,
                         forecast=decision.forecast,
                     )
@@ -252,78 +263,154 @@ class TradingNode:
                         event_id=f"{self.config.node_id}:opportunity:{self._cycle_number}:{symbol}",
                         occurred_at_ms=now_ms,
                         source=decision.strategy_id,
-                        source_version="controller-v1",
+                        source_version="controller-v2",
                         candidate=decision.candidate,
                     )
                 )
-                results.append(decision)
-                self.metrics.record_strategy_decision(admitted=decision.candidate.state == "ADMITTED")
+                decisions.append((decision, quote, market))
 
-                if not self.config.allow_execution or decision.candidate.state != "ADMITTED":
-                    continue
-                if self.execution is None:
-                    raise RuntimeError("execution sink missing")
-                instrument = self.market_data.instrument_spec(symbol)
-                built = self.context_factory(
-                    decision=decision,
-                    quote=quote,
-                    market=market,
-                    now_ms=now_ms,
-                    instrument=instrument,
-                )
-                if built is None:
-                    continue
-                intent, context = built
-                attempt = self.execution.submit(
-                    intent=intent,
-                    context=context,
-                    instrument=instrument,
-                )
-                self.metrics.record_execution(outcome=getattr(attempt, "broker_outcome", None) or getattr(attempt, "decision", None))
-                if getattr(attempt, "risk", None) is not None:
-                    self.events.publish(
-                        RiskDecisionEvent(
-                            event_id=f"{self.config.node_id}:risk:{self._cycle_number}:{symbol}:{intent.intent_id}",
-                            occurred_at_ms=now_ms,
-                            source=self.config.node_id,
-                            source_version="risk-engine-v1",
-                            symbol=symbol,
-                            intent_id=intent.intent_id,
-                            decision=attempt.risk,
-                        )
-                    )
+        if not decisions:
+            self._publish_heartbeat(now_ms)
+            return tuple(results)
+
+        candidates = tuple(decision.candidate for decision, _, _ in decisions)
+        if len({candidate.candidate_id for candidate in candidates}) != len(candidates):
+            raise RuntimeError("duplicate candidate identity in cycle")
+
+        allocation: AllocationResult | None = None
+        if self.allocator is not None:
+            allocation = self.allocator.allocate(
+                candidates=candidates,
+                strategy_order=self.strategy_order,
+            )
+            approved_ids = {candidate.candidate_id for candidate in allocation.approved}
+            rejected_reasons = dict(allocation.rejected)
+        else:
+            approved_ids = {
+                candidate.candidate_id
+                for candidate in candidates
+                if candidate.state == "ADMITTED"
+            }
+            rejected_reasons = {}
+
+        decision_by_id = {decision.candidate.candidate_id: (decision, quote, market) for decision, quote, market in decisions}
+        for candidate in candidates:
+            approved = candidate.candidate_id in approved_ids and candidate.state == "ADMITTED"
+            reason = "ALLOCATED" if approved else (
+                rejected_reasons.get(candidate.candidate_id, candidate.reason)
+            )
+            self.metrics.record_strategy_decision(admitted=approved)
+            if candidate.state == "ADMITTED" and self.allocator is not None:
                 self.events.publish(
-                    OrderLifecycleEvent(
-                        event_id=f"{self.config.node_id}:order:{self._cycle_number}:{symbol}:{intent.intent_id}",
+                    AllocationDecisionEvent(
+                        event_id=f"{self.config.node_id}:allocation:{self._cycle_number}:{candidate.candidate_id}",
+                        occurred_at_ms=now_ms,
+                        source="strategy_allocator",
+                        source_version="allocator-v1",
+                        candidate_id=candidate.candidate_id,
+                        strategy_id=candidate.strategy_id,
+                        symbol=candidate.instrument,
+                        approved=approved,
+                        reason=reason,
+                    )
+                )
+
+        for candidate in candidates:
+            if candidate.candidate_id not in approved_ids or candidate.state != "ADMITTED":
+                continue
+            decision, quote, market = decision_by_id[candidate.candidate_id]
+            if not self.config.allow_execution:
+                continue
+            if self.execution is None:
+                raise RuntimeError("execution sink missing")
+            instrument = self.market_data.instrument_spec(candidate.instrument)
+            built = self.context_factory(
+                decision=decision,
+                quote=quote,
+                market=market,
+                now_ms=now_ms,
+                instrument=instrument,
+            )
+            if built is None:
+                continue
+            intent, context = built
+            attempt = self.execution.submit(
+                intent=intent,
+                context=context,
+                instrument=instrument,
+            )
+            self.metrics.record_execution(
+                outcome=getattr(attempt, "broker_outcome", None)
+                or getattr(attempt, "decision", None)
+            )
+            if getattr(attempt, "risk", None) is not None:
+                self.events.publish(
+                    RiskDecisionEvent(
+                        event_id=f"{self.config.node_id}:risk:{self._cycle_number}:{candidate.instrument}:{intent.intent_id}",
                         occurred_at_ms=now_ms,
                         source=self.config.node_id,
-                        source_version="execution-bridge-v1",
-                        client_order_id=deterministic_client_order_id(intent),
-                        order_id=getattr(attempt, "order_id", None),
-                        state=getattr(attempt, "order_state", None),
-                        broker_order_id=getattr(attempt, "broker_order_id", None),
-                        outcome=getattr(attempt, "broker_outcome", None),
-                        reasons=tuple(getattr(attempt, "reasons", ())),
+                        source_version="risk-engine-v2",
+                        symbol=candidate.instrument,
+                        intent_id=intent.intent_id,
+                        decision=attempt.risk,
                     )
                 )
-                results.append(attempt)
+            self.events.publish(
+                OrderLifecycleEvent(
+                    event_id=f"{self.config.node_id}:order:{self._cycle_number}:{candidate.instrument}:{intent.intent_id}",
+                    occurred_at_ms=now_ms,
+                    source=self.config.node_id,
+                    source_version="execution-boundary-v2",
+                    client_order_id=deterministic_client_order_id(intent),
+                    order_id=getattr(attempt, "order_id", None),
+                    state=getattr(attempt, "order_state", None),
+                    broker_order_id=getattr(attempt, "broker_order_id", None),
+                    outcome=getattr(attempt, "broker_outcome", None),
+                    reasons=tuple(getattr(attempt, "reasons", ())),
+                )
+            )
+            results.append(attempt)
 
+        self._publish_heartbeat(now_ms)
+        return tuple(results)
+
+    @staticmethod
+    def _safe_default_market(quote, quote_age_ms: int) -> MarketState:
+        from packages.models import EventState
+
+        return MarketState(
+            EventState.NORMAL,
+            quote_age_ms,
+            (quote.ask - quote.bid) / quote.mid,
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0"),
+        )
+
+    def _publish_heartbeat(self, now_ms: int) -> None:
         health = self.supervisor.health(now_ms)
+        self.supervisor.heartbeat(now_ms)
         self.events.publish(
             HeartbeatEvent(
                 event_id=f"{self.config.node_id}:heartbeat:{self._cycle_number}",
                 occurred_at_ms=now_ms,
                 source=self.config.node_id,
-                source_version="node-v1",
+                source_version="node-v2",
                 node_id=self.config.node_id,
                 state=self.supervisor.state.value,
                 health="HEALTHY" if health.healthy else (health.reason or "UNHEALTHY"),
             )
         )
-        return tuple(results)
 
-    def run(self, *, max_cycles: int | None = None, sleep_seconds: float = 1.0, sleep_fn: Callable[[float], None] = sleep) -> None:
-        """Run cycles until stopped, failed, frozen, or max_cycles is reached."""
+    def run(
+        self,
+        *,
+        max_cycles: int | None = None,
+        sleep_seconds: float = 1.0,
+        sleep_fn: Callable[[float], None] = sleep,
+    ) -> None:
+        """Run until stopped/frozen/failed, or until max_cycles is reached."""
         if max_cycles is not None and max_cycles < 1:
             raise ValueError("max_cycles must be >= 1 when supplied")
         if sleep_seconds < 0:
@@ -345,6 +432,7 @@ class TradingNode:
 
 
 __all__ = [
+    "CandidateAllocator",
     "Clock",
     "ExecutionSink",
     "IntentContextFactory",
