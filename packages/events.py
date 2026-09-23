@@ -46,6 +46,15 @@ class OpportunityEvent(RuntimeEvent):
 
 
 @dataclass(frozen=True)
+class AllocationDecisionEvent(RuntimeEvent):
+    candidate_id: str
+    strategy_id: str
+    symbol: str
+    approved: bool
+    reason: str
+
+
+@dataclass(frozen=True)
 class RiskDecisionEvent(RuntimeEvent):
     symbol: str
     intent_id: str
@@ -97,6 +106,7 @@ __all__ = [
     "MarketQuoteEvent",
     "ForecastEvent",
     "OpportunityEvent",
+    "AllocationDecisionEvent",
     "RiskDecisionEvent",
     "OrderLifecycleEvent",
     "ReconciliationEvent",
