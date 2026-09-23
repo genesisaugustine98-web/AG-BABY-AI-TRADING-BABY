@@ -62,7 +62,20 @@ class DemoExecutionRuntime:
                 None,
                 ("EXECUTION_CONTROL_STATE_FROZEN",),
             )
-        if not self.reconciliation.trading_permitted:
+        try:
+            # Fresh broker truth is required immediately before every submission. A
+            # process can survive between cycles while the broker/session changes underneath it.
+            reconciliation = self.reconciliation.reconcile_once()
+        except Exception as exc:
+            return ExecutionAttempt(
+                "DENIED_RECONCILIATION_FAILED",
+                client_order_id,
+                None,
+                None,
+                None,
+                (f"RECONCILIATION_EXCEPTION:{type(exc).__name__}",),
+            )
+        if reconciliation.freeze_required or not self.reconciliation.trading_permitted:
             return ExecutionAttempt(
                 "DENIED_RECONCILIATION_NOT_READY",
                 client_order_id,
