@@ -37,6 +37,27 @@ class RuntimeEventStore:
 
     def append(self, event: RuntimeEvent) -> None:
         with self._chain_lock:
+            db_event_id = self._db_event_id(event.event_id)
+            existing = self._request(
+                "GET",
+                "execution_events",
+                query={
+                    "event_id": f"eq.{db_event_id}",
+                    "environment": f"eq.{self.environment}",
+                    "select": "event_hash,previous_event_hash",
+                    "limit": "1",
+                },
+            ) or []
+            if existing:
+                row = existing[0]
+                previous_hash = row.get("previous_event_hash")
+                expected = self._stable_hash(event, previous_hash)
+                if str(row.get("event_hash") or "") != expected:
+                    raise RuntimeError(f"runtime event id collision or tamper:{event.event_id}")
+                if self._last_event_hash is None:
+                    self._last_event_hash = str(row["event_hash"])
+                return
+
             if self._last_event_hash is None:
                 rows = self._request(
                     "GET",
@@ -54,14 +75,15 @@ class RuntimeEventStore:
             previous_hash = self._last_event_hash
             event_hash = self._stable_hash(event, previous_hash)
             payload = {
-                "event_id": event.event_id,
+                "event_id": db_event_id,
                 "occurred_at": datetime.fromtimestamp(event.occurred_at_ms / 1000, tz=timezone.utc).isoformat(),
                 "environment": self.environment,
                 "event_type": type(event).__name__,
                 "correlation_id": self._correlation_id(event),
+                "intent_id": getattr(event, "intent_id", None),
                 "order_id": getattr(event, "order_id", None),
                 "broker_order_id": getattr(event, "broker_order_id", None),
-                "position_id": getattr(event, "symbol", None),
+                "position_id": None,
                 "payload": self._jsonable(event),
                 "source": event.source,
                 "source_version": event.source_version,
@@ -124,6 +146,11 @@ class RuntimeEventStore:
         if isinstance(value, (list, tuple, set, frozenset)):
             return [cls._jsonable(item) for item in value]
         return value
+
+    @staticmethod
+    def _db_event_id(event_id: str) -> str:
+        import uuid
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"ag-runtime-event:{event_id}"))
 
     @classmethod
     def _stable_hash(cls, event: RuntimeEvent, previous_event_hash: str | None = None) -> str:
