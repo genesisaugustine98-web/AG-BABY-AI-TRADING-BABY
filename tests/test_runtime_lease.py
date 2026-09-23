@@ -1,6 +1,4 @@
 from datetime import datetime, timezone
-from types import MethodType
-
 import pytest
 
 from integrations.supabase_runtime_lease import LeaseLost, SupabaseRuntimeLease
@@ -21,7 +19,7 @@ def lease(monkeypatch):
 def test_lease_acquire_and_renew_is_fenced(lease):
     calls = []
 
-    def rpc(self, function_name, body):
+    def rpc(function_name, body):
         calls.append((function_name, body))
         if function_name == "runtime_acquire_lease":
             return [{
@@ -37,7 +35,7 @@ def test_lease_acquire_and_renew_is_fenced(lease):
             "lease_until": "2026-09-23T08:00:15+00:00",
         }]
 
-    lease._rpc = MethodType(rpc, lease)
+    lease._rpc = rpc
     acquired = lease.acquire()
     renewed = lease.renew()
     assert acquired.fencing_token == 7
@@ -46,17 +44,15 @@ def test_lease_acquire_and_renew_is_fenced(lease):
 
 
 def test_lease_loss_fails_closed(lease):
-    lease._rpc = MethodType(
-        lambda self, function_name, body: [{
-            "lease_name": "ag-demo",
-            "owner_id": "node-a",
-            "fencing_token": 2,
-            "lease_until": datetime.now(timezone.utc).isoformat(),
-        }]
-    )
+    lease._rpc = lambda function_name, body: [{
+        "lease_name": "ag-demo",
+        "owner_id": "node-a",
+        "fencing_token": 2,
+        "lease_until": datetime.now(timezone.utc).isoformat(),
+    }]
     lease.acquire()
 
-    lease._rpc = MethodType(lambda self, function_name, body: [])
+    lease._rpc = lambda function_name, body: []
     with pytest.raises(LeaseLost):
         lease.renew()
     assert lease.record is None
