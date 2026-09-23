@@ -1,6 +1,9 @@
 """Generate the deterministic evidence pack."""
 from __future__ import annotations
-import argparse,os,json
+import argparse,os,json,sys
+from pathlib import Path
+REPO_ROOT=Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path: sys.path.insert(0,str(REPO_ROOT))
 from packages.evidence_protocol import EvidenceClass,EvidencePack,EvidenceStatus
 from scripts.run_control_plane_drills import run_simulated_drills
 
