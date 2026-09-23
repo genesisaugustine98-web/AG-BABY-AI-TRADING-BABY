@@ -6,6 +6,14 @@ from apps.trading_runtime.node import RuntimeConfig, TradingNode
 from packages.event_bus import EventBus
 
 
+class Controller:
+    strategy_id = "test"
+    symbols = ("EURUSD",)
+
+    def evaluate(self, **kwargs):
+        raise AssertionError("strategy evaluation must not run while emergency freeze is asserted")
+
+
 class Feed:
     def quote(self, symbol, *, now_ms):
         raise AssertionError("market data must not be touched while emergency freeze is asserted")
@@ -23,7 +31,7 @@ def test_emergency_freeze_file_blocks_cycle(tmp_path: Path):
     node = TradingNode(
         config=RuntimeConfig(allow_execution=False, emergency_freeze_path=str(freeze)),
         market_data=Feed(),
-        controllers=(),
+        controllers=(Controller(),)
         context_factory=lambda **kwargs: None,
         event_bus=EventBus(),
     )
