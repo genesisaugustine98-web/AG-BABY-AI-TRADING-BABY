@@ -30,6 +30,19 @@ class PortfolioRiskLimits:
     require_complete_correlation: bool = True
     conservative_unknown_correlation: Decimal = Decimal("0.75")
 
+    def __post_init__(self) -> None:
+        for name in (
+            "max_gross_notional_fraction",
+            "max_abs_net_notional_fraction",
+            "max_margin_fraction",
+            "max_portfolio_volatility",
+            "max_abs_beta_exposure",
+            "conservative_unknown_correlation",
+        ):
+            value = getattr(self, name)
+            if not value.is_finite() or value < 0 or value > Decimal("1"):
+                raise ValueError(f"{name} must be a finite fraction in [0,1]")
+
 
 @dataclass(frozen=True)
 class PortfolioRiskDecision:
@@ -46,13 +59,12 @@ class PortfolioRiskEngine:
     def __init__(self, limits: PortfolioRiskLimits | None = None) -> None:
         self.limits = limits or PortfolioRiskLimits()
 
-    @staticmethod
-    def _corr(a: str, b: str, matrix: Mapping[tuple[str, str], Decimal]) -> Decimal:
+    def _corr(self, a: str, b: str, matrix: Mapping[tuple[str, str], Decimal]) -> Decimal:
         if a == b:
             return Decimal("1")
         value = matrix.get((a, b), matrix.get((b, a)))
         if value is None:
-            return Decimal("0.75")
+            return self.limits.conservative_unknown_correlation
         return max(Decimal("-1"), min(Decimal("1"), Decimal(str(value))))
 
     def evaluate(
