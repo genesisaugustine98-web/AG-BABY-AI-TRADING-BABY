@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from packages.execution_kernel import ExecutionAttempt, ExecutionKernel
+from packages.risk_engine import DeterministicRiskEngine, RiskLimits
 from packages.models import AdmissionContext, InstrumentSpec, TradeIntent
 from .mt5_gateway import DemoOnlyMT5Gateway
 from .mt5_orders import DemoOnlyMT5OrderAdapter
@@ -29,7 +30,7 @@ class DemoExecutionRuntime:
     reconciliation: DurableReconciliationService
 
     @classmethod
-    def create(cls) -> "DemoExecutionRuntime":
+    def create(cls, *, risk_limits: RiskLimits | None = None) -> "DemoExecutionRuntime":
         gateway = DemoOnlyMT5Gateway()
         gateway.connect_and_verify_demo()
         orders = SupabaseOrderStore(environment="demo")
@@ -47,7 +48,10 @@ class DemoExecutionRuntime:
             gateway=gateway,
             orders=orders,
             safety=safety,
-            kernel=ExecutionKernel(environment="demo"),
+            kernel=ExecutionKernel(
+                environment="demo",
+                risk_engine=DeterministicRiskEngine(risk_limits or RiskLimits()),
+            ),
             reconciliation=reconciliation,
         )
 
