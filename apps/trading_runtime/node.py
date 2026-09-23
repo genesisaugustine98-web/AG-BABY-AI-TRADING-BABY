@@ -88,8 +88,20 @@ class IntentContextFactory(Protocol):
 
 
 class SystemClock:
+    def __init__(self, *, max_backward_ms: int = 1_000, max_forward_jump_ms: int = 1_800_000) -> None:
+        self.max_backward_ms = max_backward_ms
+        self.max_forward_jump_ms = max_forward_jump_ms
+        self._last_ms: int | None = None
+
     def now_ms(self) -> int:
-        return int(time() * 1000)
+        current = int(time() * 1000)
+        if self._last_ms is not None:
+            if current + self.max_backward_ms < self._last_ms:
+                raise RuntimeError("SYSTEM_CLOCK_MOVED_BACKWARD")
+            if current - self._last_ms > self.max_forward_jump_ms:
+                raise RuntimeError("SYSTEM_CLOCK_JUMPED_FORWARD")
+        self._last_ms = current
+        return current
 
 
 @dataclass(frozen=True)
