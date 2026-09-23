@@ -566,6 +566,7 @@ class CanonicalTradingSystem:
                 allocator=allocator,
                 strategy_order=tuple(c.strategy_id for c in controllers),
                 portfolio_risk_gate=CanonicalPortfolioRiskGate(portfolio, feed, config),
+                execution_guard=(lambda: lease.renew()) if lease is not None else None,
                 event_bus=event_bus,
             )
 
