@@ -71,3 +71,31 @@ SIGINT and SIGTERM freeze durable execution state before closing the broker sess
 Do not place passwords in command history, source code, workflow files, or browser-exposed variables.
 
 See apps/trading_runtime/canonical.py for the single composition root.
+
+## Institutional hardening controls
+
+Optional multi-host fencing:
+
+    AG_DISTRIBUTED_LEASE=true
+    AG_LEASE_NAME=ag-demo-execution
+    AG_LEASE_TTL_SECONDS=30
+
+Optional local telemetry:
+
+    AG_METRICS_ENABLED=true
+    AG_METRICS_HOST=127.0.0.1
+    AG_METRICS_PORT=9300
+
+Portfolio allocation controls:
+
+    AG_MAX_CORR_ADJUSTED_RISK=0.03
+    AG_MAX_ABS_NET_RISK=0.03
+    AG_REQUIRE_COMPLETE_CORRELATIONS=true
+    AG_PORTFOLIO_CORRELATIONS={"EURUSD,GBPUSD":"0.78"}
+
+Execution circuit breakers:
+
+    AG_MAX_EXECUTION_UNKNOWN=1
+    AG_MAX_EXECUTION_REJECTIONS=5
+
+The complete failure matrix, promotion doctrine, and multi-host safety contract are in docs/INSTITUTIONAL_RUNTIME.md.
