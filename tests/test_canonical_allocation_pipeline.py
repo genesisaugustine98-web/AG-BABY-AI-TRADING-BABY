@@ -3,8 +3,9 @@ from decimal import Decimal
 from apps.trading_runtime.node import RuntimeConfig, TradingNode
 from packages.event_bus import EventBus
 from packages.events import StrategyDecision
-from packages.models import EventState, Forecast, InstrumentSpec, MarketState, Quote
+from packages.models import AdmissionContext, EventState, Forecast, InstrumentSpec, MarketState, Quote, TradeIntent
 from packages.opportunity import OpportunityCandidate
+from packages.portfolio_risk import PortfolioRiskDecision
 from packages.strategy_allocator import AllocationLimits, StrategyAllocator
 
 
@@ -90,3 +91,51 @@ def test_allocator_is_before_execution_and_rejected_candidate_never_builds_order
     assert not context_calls
     allocation_events = [e for e in node.events.history() if type(e).__name__ == "AllocationDecisionEvent"]
     assert allocation_events and allocation_events[0].approved is False
+
+
+class AllowingContext:
+    def __call__(self, **kwargs):
+        return (
+            TradeIntent(
+                "intent-1", "tsmom", "1", "policy", "EURUSD", "BUY",
+                Decimal("0.01"), "MARKET", None, Decimal("0.999"), Decimal("1.01"),
+                1_000_000, 1_003_600, Decimal("0.001"), Decimal("0.005"), 3600,
+            ),
+            kwargs["decision"],
+        )
+
+
+def test_exact_portfolio_gate_runs_after_sizing_and_before_execution():
+    execution = Execution()
+    node = TradingNode(
+        config=RuntimeConfig(allow_execution=True),
+        market_data=Feed(),
+        controllers=(Controller(),),
+        context_factory=AllowingContext(),
+        execution=execution,
+        market_state_factory=lambda *, quote, now_ms: MarketState(
+            EventState.NORMAL, 100, Decimal("0.0001"), Decimal("0.9"),
+            Decimal("0.1"), Decimal("0.95"), Decimal("0.99")
+        ),
+        allocator=StrategyAllocator(
+            AllocationLimits(
+                max_total_risk=Decimal("0.01"),
+                max_per_strategy_risk=Decimal("0.01"),
+                max_per_instrument_risk=Decimal("0.01"),
+                max_candidates=8,
+            )
+        ),
+        portfolio_risk_gate=lambda **kwargs: PortfolioRiskDecision(
+            False, ("PORTFOLIO_TEST_DENY",), Decimal("0.02"), Decimal("0.01"),
+            Decimal("0.01"), Decimal("0.10"), Decimal("0.01"),
+        ),
+        strategy_order=("tsmom",),
+        event_bus=EventBus(),
+        clock=Clock(),
+    )
+    node.start()
+    node.cycle()
+    assert not execution.calls
+    events = [e for e in node.events.history() if type(e).__name__ == "PortfolioRiskDecisionEvent"]
+    assert events and events[0].approved is False
+    assert events[0].reasons == ("PORTFOLIO_TEST_DENY",)
