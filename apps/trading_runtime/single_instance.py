@@ -26,6 +26,11 @@ class SingletonLock:
             if os.name == "nt":
                 import msvcrt
                 handle.seek(0)
+                if not handle.read(1):
+                    handle.seek(0)
+                    handle.write("0")
+                    handle.flush()
+                handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
