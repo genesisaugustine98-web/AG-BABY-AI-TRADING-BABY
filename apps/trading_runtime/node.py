@@ -22,6 +22,7 @@ from packages.events import (
     MarketQuoteEvent,
     OpportunityEvent,
     OrderLifecycleEvent,
+    PortfolioRiskDecisionEvent,
     RiskDecisionEvent,
     StrategyDecision,
 )
@@ -32,6 +33,7 @@ from packages.runtime_metrics import RuntimeMetrics
 from packages.runtime_supervisor import RuntimeState, RuntimeSupervisor
 from packages.strategy_allocator import AllocationResult
 from packages.strategy_controller import StrategyController
+from packages.portfolio_risk import PortfolioRiskDecision
 
 
 class Clock(Protocol):
@@ -69,6 +71,19 @@ class CandidateAllocator(Protocol):
         strategy_order: tuple[str, ...],
     ) -> AllocationResult:
         ...
+
+
+class PortfolioRiskGate(Protocol):
+    def __call__(
+        self,
+        *,
+        candidate: OpportunityCandidate,
+        intent: TradeIntent,
+        quote,
+        market: MarketState,
+        instrument: InstrumentSpec,
+        now_ms: int,
+    ) -> PortfolioRiskDecision: ...
 
 
 class MarketStateFactory(Protocol):
@@ -150,6 +165,7 @@ class TradingNode:
         market_state_factory: MarketStateFactory | None = None,
         allocator: CandidateAllocator | None = None,
         strategy_order: tuple[str, ...] = (),
+        portfolio_risk_gate: PortfolioRiskGate | None = None,
         clock: Clock | None = None,
         event_bus: EventBus | None = None,
         supervisor: RuntimeSupervisor | None = None,
@@ -166,6 +182,7 @@ class TradingNode:
         self.market_state_factory = market_state_factory
         self.allocator = allocator
         self.strategy_order = strategy_order or tuple(c.strategy_id for c in controllers)
+        self.portfolio_risk_gate = portfolio_risk_gate
         self.clock = clock or SystemClock()
         self.events = event_bus or EventBus()
         self.supervisor = supervisor or RuntimeSupervisor(
@@ -359,6 +376,34 @@ class TradingNode:
             if built is None:
                 continue
             intent, context = built
+            if self.portfolio_risk_gate is not None:
+                portfolio_risk = self.portfolio_risk_gate(
+                    candidate=candidate,
+                    intent=intent,
+                    quote=quote,
+                    market=market,
+                    instrument=instrument,
+                    now_ms=now_ms,
+                )
+                self.events.publish(
+                    PortfolioRiskDecisionEvent(
+                        event_id=self._event_id(f"portfolio-risk:{self._cycle_number}:{candidate.instrument}:{intent.intent_id}"),
+                        occurred_at_ms=now_ms,
+                        source=self.config.node_id,
+                        source_version=f"portfolio-risk-v1:{self.config_fingerprint}",
+                        candidate_id=candidate.candidate_id,
+                        symbol=candidate.instrument,
+                        approved=portfolio_risk.approved,
+                        reasons=portfolio_risk.reasons,
+                        gross_fraction=str(portfolio_risk.gross_fraction),
+                        net_fraction=str(portfolio_risk.net_fraction),
+                        margin_fraction=str(portfolio_risk.margin_fraction),
+                        portfolio_volatility=str(portfolio_risk.portfolio_volatility),
+                        beta_exposure=str(portfolio_risk.beta_exposure),
+                    )
+                )
+                if not portfolio_risk.approved:
+                    continue
             attempt = self.execution.submit(
                 intent=intent,
                 context=context,
