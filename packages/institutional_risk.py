@@ -184,9 +184,29 @@ def correlations_from_env_payload(payload: str) -> dict[tuple[str, str], Decimal
         result[(parts[0], parts[1])] = Decimal(str(value))
     return result
 
+def betas_from_env_payload(payload: str) -> dict[str, Decimal]:
+    """Parse {"EURUSD": 0.10, "USDJPY": -0.05} into normalized instrument betas."""
+    import json
+
+    raw = payload.strip()
+    if not raw:
+        return {}
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("AG_PORTFOLIO_BETAS must be a JSON object")
+    result: dict[str, Decimal] = {}
+    for key, value in parsed.items():
+        instrument = str(key).strip().upper()
+        beta = Decimal(str(value))
+        if not instrument or not beta.is_finite():
+            raise ValueError(f"invalid portfolio beta:{key}")
+        result[instrument] = beta
+    return result
+
 
 __all__ = [
     "InstitutionalAllocationLimits",
     "InstitutionalStrategyAllocator",
     "correlations_from_env_payload",
+    "betas_from_env_payload",
 ]
