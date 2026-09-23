@@ -290,6 +290,7 @@ class CanonicalTradingSystem:
         config.validate()
         lock = SingletonLock(config.lock_path)
         lock.acquire()
+        runtime: DemoExecutionRuntime | None = None
         try:
             runtime = DemoExecutionRuntime.create()
             event_bus = EventBus(history_limit=2000)
@@ -363,6 +364,11 @@ class CanonicalTradingSystem:
                 event_bus=event_bus,
             )
         except Exception:
+            if runtime is not None:
+                try:
+                    runtime.close()
+                except Exception:
+                    pass
             lock.release()
             raise
 
