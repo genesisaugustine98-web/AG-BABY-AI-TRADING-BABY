@@ -18,8 +18,9 @@ from typing import Any
 
 from apps.execution_gateway.runtime import DemoExecutionRuntime
 from packages.event_bus import EventBus
-from packages.events import FreezeEvent
+from packages.events import FreezeEvent, OrderLifecycleEvent
 from packages.model_governance import ModelEvidence, ModelGovernance, ModelState
+from packages.circuit_breaker import CircuitBreakerLimits, ExecutionCircuitBreaker
 from packages.models import AdmissionContext, EventState, InstrumentSpec, MarketState, PortfolioState, TradeIntent
 from packages.portfolio_engine import PortfolioEngine, PositionSnapshot
 from packages.risk import size_for_cash_risk
@@ -100,6 +101,8 @@ class CanonicalConfig:
     metrics_enabled: bool = False
     metrics_host: str = "127.0.0.1"
     metrics_port: int = 9300
+    max_execution_unknown_outcomes: int = 1
+    max_execution_rejections: int = 5
 
     @classmethod
     def from_env(cls) -> "CanonicalConfig":
@@ -142,6 +145,8 @@ class CanonicalConfig:
             metrics_enabled=_bool_env("AG_METRICS_ENABLED", False),
             metrics_host=os.environ.get("AG_METRICS_HOST", "127.0.0.1").strip(),
             metrics_port=_int_env("AG_METRICS_PORT", 9300),
+            max_execution_unknown_outcomes=_int_env("AG_MAX_EXECUTION_UNKNOWN", 1),
+            max_execution_rejections=_int_env("AG_MAX_EXECUTION_REJECTIONS", 5),
         )
         config.validate()
         return config
@@ -187,6 +192,8 @@ class CanonicalConfig:
                 raise ValueError("metrics_host must remain loopback-only")
             if self.metrics_port < 1024 or self.metrics_port > 65535:
                 raise ValueError("metrics_port must be between 1024 and 65535")
+        if self.max_execution_unknown_outcomes < 1 or self.max_execution_rejections < 1:
+            raise ValueError("execution circuit breaker thresholds must be >= 1")
 
 
 class CanonicalMarketStateFactory:
@@ -327,6 +334,7 @@ class CanonicalTradingSystem:
         self._closed = False
         self._lease: SupabaseRuntimeLease | None = None
         self._metrics_server: MetricsHTTPServer | None = None
+        self._circuit_breaker: ExecutionCircuitBreaker | None = None
 
     @classmethod
     def create(cls, config: CanonicalConfig) -> "CanonicalTradingSystem":
@@ -414,6 +422,20 @@ class CanonicalTradingSystem:
                 strategy_order=tuple(c.strategy_id for c in controllers),
                 event_bus=event_bus,
             )
+
+            def trip_execution(reason: str) -> None:
+                node.supervisor.freeze(reason)
+                runtime.safety.set_frozen(True, reason=reason)
+
+            circuit_breaker = ExecutionCircuitBreaker(
+                CircuitBreakerLimits(
+                    max_unknown_outcomes=config.max_execution_unknown_outcomes,
+                    max_rejected_outcomes=config.max_execution_rejections,
+                ),
+                trip_callback=trip_execution,
+            )
+            event_bus.subscribe(OrderLifecycleEvent, circuit_breaker.observe, critical=True)
+
             system = cls(
                 config=config,
                 runtime=runtime,
@@ -423,6 +445,7 @@ class CanonicalTradingSystem:
                 event_bus=event_bus,
             )
             system._lease = lease
+            system._circuit_breaker = circuit_breaker
             if config.metrics_enabled:
                 metrics_server = MetricsHTTPServer(
                     host=config.metrics_host,
