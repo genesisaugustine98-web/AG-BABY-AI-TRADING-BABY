@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 from time import sleep, time
+from uuid import uuid4
 from typing import Callable, Protocol
 
 from packages.event_bus import EventBus
@@ -115,6 +116,7 @@ class RuntimeConfig:
     allow_execution: bool = False
     heartbeat_interval_ms: int = 5_000
     max_cycles_without_progress: int = 3
+    runtime_instance_id: str = ""
 
     def __post_init__(self) -> None:
         if not self.node_id.strip():
@@ -129,6 +131,8 @@ class RuntimeConfig:
             raise ValueError("heartbeat interval must be positive")
         if self.max_cycles_without_progress < 1:
             raise ValueError("max_cycles_without_progress must be >= 1")
+        if self.runtime_instance_id and not self.runtime_instance_id.strip():
+            raise ValueError("runtime_instance_id must be non-empty when supplied")
 
 
 class TradingNode:
@@ -167,6 +171,7 @@ class TradingNode:
         )
         self._cycle_number = 0
         self.metrics = RuntimeMetrics()
+        self.runtime_instance_id = config.runtime_instance_id.strip() or uuid4().hex
 
     @property
     def state(self) -> RuntimeState:
@@ -193,7 +198,7 @@ class TradingNode:
             try:
                 self.events.publish(
                     FreezeEvent(
-                        event_id=f"{self.config.node_id}:freeze:{self._cycle_number + 1}",
+                        event_id=self._event_id(f"freeze:{self._cycle_number + 1}"),
                         occurred_at_ms=now_ms,
                         source=self.config.node_id,
                         source_version="node-v2",
@@ -223,7 +228,7 @@ class TradingNode:
                 quote = self.market_data.quote(symbol, now_ms=now_ms)
                 self.events.publish(
                     MarketQuoteEvent(
-                        event_id=f"{self.config.node_id}:quote:{self._cycle_number}:{symbol}",
+                        event_id=self._event_id(f"quote:{self._cycle_number}:{symbol}"),
                         occurred_at_ms=now_ms,
                         source="trading_node",
                         source_version="node-v2",
@@ -262,7 +267,7 @@ class TradingNode:
 
                 self.events.publish(
                     ForecastEvent(
-                        event_id=f"{self.config.node_id}:forecast:{self._cycle_number}:{symbol}",
+                        event_id=self._event_id(f"forecast:{self._cycle_number}:{symbol}"),
                         occurred_at_ms=now_ms,
                         source=decision.strategy_id,
                         source_version="controller-v2",
@@ -272,7 +277,7 @@ class TradingNode:
                 )
                 self.events.publish(
                     OpportunityEvent(
-                        event_id=f"{self.config.node_id}:opportunity:{self._cycle_number}:{symbol}",
+                        event_id=self._event_id(f"opportunity:{self._cycle_number}:{symbol}"),
                         occurred_at_ms=now_ms,
                         source=decision.strategy_id,
                         source_version="controller-v2",
@@ -319,7 +324,7 @@ class TradingNode:
             if candidate.state == "ADMITTED" and self.allocator is not None:
                 self.events.publish(
                     AllocationDecisionEvent(
-                        event_id=f"{self.config.node_id}:allocation:{self._cycle_number}:{candidate.candidate_id}",
+                        event_id=self._event_id(f"allocation:{self._cycle_number}:{candidate.candidate_id}"),
                         occurred_at_ms=now_ms,
                         source="strategy_allocator",
                         source_version="allocator-v1",
@@ -362,7 +367,7 @@ class TradingNode:
             if getattr(attempt, "risk", None) is not None:
                 self.events.publish(
                     RiskDecisionEvent(
-                        event_id=f"{self.config.node_id}:risk:{self._cycle_number}:{candidate.instrument}:{intent.intent_id}",
+                        event_id=self._event_id(f"risk:{self._cycle_number}:{candidate.instrument}:{intent.intent_id}"),
                         occurred_at_ms=now_ms,
                         source=self.config.node_id,
                         source_version="risk-engine-v2",
@@ -373,7 +378,7 @@ class TradingNode:
                 )
             self.events.publish(
                 OrderLifecycleEvent(
-                    event_id=f"{self.config.node_id}:order:{self._cycle_number}:{candidate.instrument}:{intent.intent_id}",
+                    event_id=self._event_id(f"order:{self._cycle_number}:{candidate.instrument}:{intent.intent_id}"),
                     occurred_at_ms=now_ms,
                     source=self.config.node_id,
                     source_version="execution-boundary-v2",
@@ -404,12 +409,18 @@ class TradingNode:
             Decimal("0"),
         )
 
+    def _event_id(self, suffix: str) -> str:
+        suffix = suffix.strip()
+        if not suffix:
+            raise ValueError("event suffix is required")
+        return f"{self.config.node_id}:{self.runtime_instance_id}:{suffix}"
+
     def _publish_heartbeat(self, now_ms: int) -> None:
         self.supervisor.heartbeat(now_ms)
         health = self.supervisor.health(now_ms)
         self.events.publish(
             HeartbeatEvent(
-                event_id=f"{self.config.node_id}:heartbeat:{self._cycle_number}",
+                event_id=self._event_id(f"heartbeat:{self._cycle_number}"),
                 occurred_at_ms=now_ms,
                 source=self.config.node_id,
                 source_version="node-v2",
