@@ -37,6 +37,20 @@ class RuntimeEventStore:
 
     def append(self, event: RuntimeEvent) -> None:
         with self._chain_lock:
+            if self._last_event_hash is None:
+                rows = self._request(
+                    "GET",
+                    "execution_events",
+                    query={
+                        "environment": f"eq.{self.environment}",
+                        "select": "event_hash",
+                        "event_hash": "not.is.null",
+                        "order": "occurred_at.desc,event_id.desc",
+                        "limit": "1",
+                    },
+                ) or []
+                self._last_event_hash = str(rows[0]["event_hash"]) if rows else None
+
             db_event_id = self._db_event_id(event.event_id)
             existing = self._request(
                 "GET",
@@ -54,23 +68,7 @@ class RuntimeEventStore:
                 expected = self._stable_hash(event, previous_hash)
                 if str(row.get("event_hash") or "") != expected:
                     raise RuntimeError(f"runtime event id collision or tamper:{event.event_id}")
-                if self._last_event_hash is None:
-                    self._last_event_hash = str(row["event_hash"])
                 return
-
-            if self._last_event_hash is None:
-                rows = self._request(
-                    "GET",
-                    "execution_events",
-                    query={
-                        "environment": f"eq.{self.environment}",
-                        "select": "event_hash",
-                        "event_hash": "not.is.null",
-                        "order": "occurred_at.desc,event_id.desc",
-                        "limit": "1",
-                    },
-                ) or []
-                self._last_event_hash = str(rows[0]["event_hash"]) if rows else None
 
             previous_hash = self._last_event_hash
             event_hash = self._stable_hash(event, previous_hash)
