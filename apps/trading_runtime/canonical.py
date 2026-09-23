@@ -23,7 +23,8 @@ from packages.model_governance import ModelEvidence, ModelGovernance, ModelState
 from packages.models import AdmissionContext, EventState, InstrumentSpec, MarketState, PortfolioState, TradeIntent
 from packages.portfolio_engine import PortfolioEngine, PositionSnapshot
 from packages.risk import size_for_cash_risk
-from packages.strategy_allocator import AllocationLimits, StrategyAllocator
+from packages.strategy_allocator import AllocationLimits
+from packages.institutional_risk import InstitutionalAllocationLimits, InstitutionalStrategyAllocator, correlations_from_env_payload
 from packages.strategy_controller import TSMOMController
 from packages.tsmom_forecast import PriceBar, TSMOMForecastModel, TSMOMValidation, dataset_fingerprint
 from packages.runtime_supervisor import RuntimeState
@@ -87,6 +88,10 @@ class CanonicalConfig:
     require_model_governance: bool = True
     governance_min_calibration: Decimal = Decimal("0.65")
     governance_max_drawdown: Decimal = Decimal("0.08")
+    portfolio_max_correlation_adjusted_risk: Decimal = Decimal("0.03")
+    portfolio_max_abs_net_risk: Decimal = Decimal("0.03")
+    portfolio_require_complete_correlations: bool = True
+    portfolio_correlations_json: str = "{}"
 
     @classmethod
     def from_env(cls) -> "CanonicalConfig":
@@ -119,6 +124,10 @@ class CanonicalConfig:
             require_model_governance=_bool_env("AG_REQUIRE_MODEL_GOVERNANCE", True),
             governance_min_calibration=_decimal_env("AG_MIN_CALIBRATION", Decimal("0.65")),
             governance_max_drawdown=_decimal_env("AG_MAX_PROMOTION_DRAWDOWN", Decimal("0.08")),
+            portfolio_max_correlation_adjusted_risk=_decimal_env("AG_MAX_CORR_ADJUSTED_RISK", Decimal("0.03")),
+            portfolio_max_abs_net_risk=_decimal_env("AG_MAX_ABS_NET_RISK", Decimal("0.03")),
+            portfolio_require_complete_correlations=_bool_env("AG_REQUIRE_COMPLETE_CORRELATIONS", True),
+            portfolio_correlations_json=os.environ.get("AG_PORTFOLIO_CORRELATIONS", "{}"),
         )
         config.validate()
         return config
@@ -145,6 +154,8 @@ class CanonicalConfig:
             ("max_per_instrument_risk", self.max_per_instrument_risk),
             ("governance_min_calibration", self.governance_min_calibration),
             ("governance_max_drawdown", self.governance_max_drawdown),
+            ("portfolio_max_correlation_adjusted_risk", self.portfolio_max_correlation_adjusted_risk),
+            ("portfolio_max_abs_net_risk", self.portfolio_max_abs_net_risk),
         ):
             if value < 0 or value > Decimal("1"):
                 raise ValueError(f"{name} must be in [0,1]")
@@ -328,13 +339,19 @@ class CanonicalTradingSystem:
                 controllers.append(TSMOMController(model=model, symbols=(symbol,)))
 
             feed = MT5RuntimeAdapter(runtime.gateway)
-            allocator = StrategyAllocator(
-                AllocationLimits(
+            correlations = correlations_from_env_payload(config.portfolio_correlations_json)
+            allocator = InstitutionalStrategyAllocator(
+                InstitutionalAllocationLimits(
                     max_total_risk=config.max_total_risk,
                     max_per_strategy_risk=config.max_per_strategy_risk,
                     max_per_instrument_risk=config.max_per_instrument_risk,
                     max_candidates=config.max_candidates,
-                )
+                    max_correlation_adjusted_risk=config.portfolio_max_correlation_adjusted_risk,
+                    max_abs_net_risk=config.portfolio_max_abs_net_risk,
+                    require_complete_correlations=config.portfolio_require_complete_correlations,
+                ),
+                correlations=correlations,
+                current_risk_provider=lambda: portfolio.snapshot().gross_risk_fraction,
             )
             node = TradingNode(
                 config=RuntimeConfig(
@@ -469,13 +486,13 @@ def _refresh_portfolio(runtime: DemoExecutionRuntime, portfolio: PortfolioEngine
     # process restart from forgetting risk already committed to live/pending demo orders.
     portfolio.reset_order_risk_reservations()
     portfolio.reset_strategy_risk()
+    strategy_totals: dict[str, Decimal] = {}
     if hasattr(runtime.orders, "active_order_risk_reservations"):
         for order_id, strategy_id, risk in runtime.orders.active_order_risk_reservations():
             portfolio.reserve_order_risk(order_id, risk)
-            portfolio.set_strategy_risk(
-                strategy_id,
-                portfolio.snapshot(captured_at_ms=captured_at_ms).strategy_risk_fraction + risk,
-            )
+            strategy_totals[strategy_id] = strategy_totals.get(strategy_id, Decimal("0")) + risk
+    for strategy_id, risk in strategy_totals.items():
+        portfolio.set_strategy_risk(strategy_id, risk)
 
 
 def _require_demo_governance(config: CanonicalConfig, validation: TSMOMValidation) -> None:
