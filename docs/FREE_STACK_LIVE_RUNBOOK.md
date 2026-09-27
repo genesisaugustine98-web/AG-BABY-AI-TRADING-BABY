@@ -7,7 +7,7 @@ This branch makes the **research/control plane live**. It does not enable live-c
 The production-like topology is:
 
 - Linux host: continuous public-data observation/research.
-- Supabase Free: compact control state, evidence, model registry, demo ledger.
+- Supabase Free: compact control state, evidence, model registry, demo ledger and source health.
 - Vercel Hobby: cockpit/read-only web UI.
 - Windows MT5 host: broker-facing execution boundary, still demo-only until the repository's execution evidence gate is satisfied.
 - GitHub Actions: free CI/research jobs for this public repository.
@@ -26,11 +26,21 @@ sudo git clone --branch codex/free-stack-multihorizon-20260927 \
 cd /opt/ag-baby
 ```
 
-Install the observer:
+Install the observer/research fabric:
 
 ```bash
 sudo bash deploy/linux/install_free_stack.sh
 ```
+
+The service now:
+
+1. polls public Binance/Kraken sources;
+2. normalizes source observations into the existing research contract;
+3. periodically fetches closed Binance candles;
+4. runs the existing TSMOM model at native M15/H1/H4/D1 horizons;
+5. emits a multi-horizon consensus proposal;
+6. stores compact provenance-bearing JSONL locally;
+7. optionally publishes source health/last-seen metadata into Supabase.
 
 Check:
 
@@ -38,23 +48,35 @@ Check:
 sudo systemctl --no-pager status ag-baby-free-stack
 curl -sS http://127.0.0.1:8787/healthz
 curl -sS http://127.0.0.1:8787/metrics
+tail -n 5 /var/lib/ag-baby/observations/observations-$(date -u +%Y-%m-%d).jsonl
 ```
 
-Data is written under:
+### Environment
 
-```
-/var/lib/ag-baby/observations/
-```
-
-The daemon defaults to a 60-second observation interval and can be changed with `OBSERVATION_INTERVAL_SECONDS`. Keep it at or above 15 seconds unless a specific source has been validated for faster polling.
-
-## FRED
-
-FRED/ALFRED currently require an API key. Store it only in the root-owned environment file:
+Create the root-owned environment file:
 
 ```bash
 sudo install -m 600 /dev/null /etc/ag-baby/ag-baby.env
-sudo sh -c 'printf "FRED_API_KEY=REPLACE_ME\\n" > /etc/ag-baby/ag-baby.env'
+sudo tee /etc/ag-baby/ag-baby.env >/dev/null <<'EOF'
+BINANCE_SYMBOL=BTCUSDT
+KRAKEN_FUTURES_SYMBOL=PI_XBTUSD
+OBSERVATION_INTERVAL_SECONDS=60
+RESEARCH_INTERVAL_SECONDS=900
+RESEARCH_HORIZONS=M15,H1,H4,D1
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SECRET_KEY=REPLACE_WITH_SERVER_ONLY_KEY
+EOF
+sudo systemctl restart ag-baby-free-stack
+```
+
+Do not put this file in Git.
+
+## FRED
+
+FRED/ALFRED currently require an API key. Store it only in the same root-owned environment file:
+
+```bash
+sudo sh -c 'printf "FRED_API_KEY=REPLACE_ME\\n" >> /etc/ag-baby/ag-baby.env'
 sudo systemctl restart ag-baby-free-stack
 ```
 
@@ -74,7 +96,7 @@ The current runtime uses a Windows execution boundary with MetaTrader 5. Keep:
 
 on the Windows execution host.
 
-The free-first research branch must feed **observations/evidence**, not directly submit an order.
+The free-first research branch feeds **observations and evidence into research**, not directly into a broker submission.
 
 ## Vercel
 
@@ -142,9 +164,9 @@ Keep the database compact. Store:
 - model metadata;
 - evidence;
 - policies;
-- compact observations;
+- source health;
 - orders/fills/reconciliation;
-- source health.
+- compact control observations.
 
 Do not store every tick/order-book update in Postgres.
 
