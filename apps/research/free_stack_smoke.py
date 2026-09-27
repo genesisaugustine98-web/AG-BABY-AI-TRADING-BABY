@@ -11,7 +11,7 @@ from .free_stack_sources import BinancePublicClient, KrakenFuturesPublicClient
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="AG-BABY free data stack smoke test")
     parser.add_argument("--binance-symbol", default="BTCUSDT")
-    parser.add_argument("--kraken-symbol", default="PF_XBTUSD")
+    parser.add_argument("--kraken-symbol", default="PI_XBTUSD")
     args = parser.parse_args(argv)
 
     results: list[dict[str, object]] = []
