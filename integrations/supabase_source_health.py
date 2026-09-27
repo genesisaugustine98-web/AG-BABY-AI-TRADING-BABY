@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 
 
@@ -23,11 +24,14 @@ class SupabaseSourceHealthPublisher:
     def publish(self, *, source_id: str, health: float, metadata: dict[str, object] | None = None) -> None:
         if not self.configured:
             return
+        if not source_id.strip():
+            raise ValueError("source_id is required")
         if not 0.0 <= health <= 1.0:
             raise ValueError("health must be in [0,1]")
         payload = json.dumps({
-            "source_id": source_id,
+            "source_id": source_id.strip(),
             "health": health,
+            "last_seen_at": datetime.now(timezone.utc).isoformat(),
             "metadata": metadata or {},
         }).encode("utf-8")
         request = Request(
