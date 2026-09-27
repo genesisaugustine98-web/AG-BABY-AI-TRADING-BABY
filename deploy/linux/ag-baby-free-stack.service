@@ -1,0 +1,23 @@
+[Unit]
+Description=AG-BABY free market observation daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agbaby
+Group=agbaby
+WorkingDirectory=/opt/ag-baby
+EnvironmentFile=-/etc/ag-baby/ag-baby.env
+ExecStart=/usr/bin/python3.11 -m apps.research.free_stack_daemon --output-dir /var/lib/ag-baby/observations
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ag-baby
+UMask=027
+
+[Install]
+WantedBy=multi-user.target
