@@ -16,6 +16,11 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
+def redact_url_credentials(url: str) -> str:
+    """Do not persist/log query parameters that may contain API keys."""
+    return url.split("?", 1)[0]
+
+
 @dataclass(frozen=True)
 class SourceSnapshot:
     source_id: str
@@ -45,7 +50,7 @@ class PublicHttpClient:
         payload = json.loads(raw.decode("utf-8"))
         return SourceSnapshot(
             source_id="http-json",
-            url=full_url,
+            url=redact_url_credentials(full_url),
             fetched_at_ms=int(time.time() * 1000),
             sha256=sha256(raw).hexdigest(),
             payload=payload,
@@ -69,6 +74,8 @@ class BinancePublicClient:
         )
 
     def klines(self, symbol: str, interval: str = "1h", limit: int = 500) -> SourceSnapshot:
+        if not symbol.strip():
+            raise ValueError("symbol is required")
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
         return self.client.get_json(
@@ -80,11 +87,14 @@ class BinancePublicClient:
 class KrakenFuturesPublicClient:
     """Public Kraken Futures analytics/candles adapter."""
     BASE_URL = "https://futures.kraken.com/api/charts/v1"
+    ANALYTICS_PATH = "analytics"
 
     def __init__(self, client: PublicHttpClient | None = None) -> None:
         self.client = client or PublicHttpClient()
 
     def candles(self, symbol: str, resolution: str = "1h", count: int = 200) -> SourceSnapshot:
+        if not symbol.strip():
+            raise ValueError("symbol is required")
         if count < 1 or count > 5000:
             raise ValueError("count must be between 1 and 5000")
         return self.client.get_json(
@@ -93,28 +103,32 @@ class KrakenFuturesPublicClient:
         )
 
     def analytics(self, symbol: str, analytics_type: str = "funding", since: int | None = None, interval: int = 3600) -> SourceSnapshot:
+        if not symbol.strip() or not analytics_type.strip():
+            raise ValueError("symbol and analytics_type are required")
         if interval not in {60, 300, 900, 1800, 3600, 14400, 43200, 86400, 604800}:
             raise ValueError("unsupported Kraken analytics interval")
         params = {"since": since or int(time.time()) - 86400 * 7, "interval": interval}
         return self.client.get_json(
-            f"{self.BASE_URL}/{symbol.strip()}/{analytics_type}",
+            f"{self.BASE_URL}/{self.ANALYTICS_PATH}/{symbol.strip()}/{analytics_type.strip()}",
             params=params,
         )
 
 
 class CFTCClient:
-    """CFTC public reporting adapter. API tokens are not required for normal use."""
+    """CFTC public reporting adapter. Normal PRE API use does not require a token."""
 
     def __init__(self, client: PublicHttpClient | None = None) -> None:
         self.client = client or PublicHttpClient()
 
     def fetch_url(self, url: str) -> SourceSnapshot:
+        if not url.startswith("https://"):
+            raise ValueError("CFTC source must use HTTPS")
         snapshot = self.client.get_json(url)
         return SourceSnapshot("cftc-pre", snapshot.url, snapshot.fetched_at_ms, snapshot.sha256, snapshot.payload)
 
 
 class FREDClient:
-    """FRED/ALFRED adapter. FRED API keys are required by the current API."""
+    """FRED/ALFRED adapter. Current API requests require a registered API key."""
     BASE_URL = "https://api.stlouisfed.org/fred"
 
     def __init__(self, api_key: str | None = None, client: PublicHttpClient | None = None) -> None:
@@ -124,8 +138,10 @@ class FREDClient:
     def observations(self, series_id: str, *, start: str | None = None, end: str | None = None, vintage: str | None = None) -> SourceSnapshot:
         if not self.api_key:
             raise RuntimeError("FRED_API_KEY is required for FRED API access")
+        if not series_id.strip():
+            raise ValueError("series_id is required")
         params: dict[str, Any] = {
-            "series_id": series_id,
+            "series_id": series_id.strip(),
             "api_key": self.api_key,
             "file_type": "json",
             "observation_start": start,
@@ -134,13 +150,7 @@ class FREDClient:
         if vintage:
             params["realtime_end"] = vintage
             params["realtime_start"] = vintage
-        snapshot = self.client.get_json(f"{self.BASE_URL}/series/observations", params=params)
-        return SourceSnapshot("fred", snapshot.url, snapshot.fetched_at_ms, snapshot.sha256, snapshot.payload)
-
-
-def redact_url_credentials(url: str) -> str:
-    """Do not log query parameters that can contain API keys."""
-    return url.split("?", 1)[0]
+        return self.client.get_json(f"{self.BASE_URL}/series/observations", params=params)
 
 
 __all__ = [
