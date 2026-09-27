@@ -1,0 +1,61 @@
+{
+  "schema_version": "1",
+  "principle": "Use free/public sources as independent observations; do not equate source count with information count.",
+  "production_boundary": {
+    "capital_execution": false,
+    "broker_credentials_allowed": false,
+    "purpose": "research_and_observation"
+  },
+  "primary_sources": {
+    "fx_executable": [
+      "MT5_demo_feed"
+    ],
+    "fx_macro": [
+      "FRED_ALFRED",
+      "ECB_DATA",
+      "FED",
+      "BOE",
+      "BOJ",
+      "BLS",
+      "BEA",
+      "CFTC_COT"
+    ],
+    "crypto_market": [
+      "BINANCE_PUBLIC",
+      "COINBASE_PUBLIC",
+      "KRAKEN_PUBLIC"
+    ],
+    "crypto_derivatives": [
+      "BINANCE_DERIVATIVES_PUBLIC",
+      "KRAKEN_FUTURES_ANALYTICS"
+    ],
+    "crypto_onchain": [
+      "ETHERSCAN",
+      "DUNE",
+      "DEFILLAMA"
+    ]
+  },
+  "candidate_horizons": {
+    "strategic": ["D1", "W1"],
+    "swing": ["H4", "D1"],
+    "tactical": ["H1", "M30"],
+    "intraday": ["M15", "M5"],
+    "microstructure": ["M1"]
+  },
+  "research_policy": {
+    "required": [
+      "point_in_time_data",
+      "historical_vintages_for_revised_macro",
+      "realistic_bid_ask",
+      "commission_and_financing",
+      "delay_stress",
+      "walk_forward",
+      "untouched_holdout",
+      "multiple_testing_control",
+      "capacity_analysis",
+      "regime_breakdown",
+      "parameter_perturbation"
+    ],
+    "promotion_rule": "No production/demo risk budget from a free-source strategy until the strategy passes the repository research gate and forward demo evidence."
+  }
+}

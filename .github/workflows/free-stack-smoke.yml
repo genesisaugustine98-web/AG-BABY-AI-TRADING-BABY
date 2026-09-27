@@ -1,0 +1,24 @@
+name: free-stack-smoke
+
+on:
+  push:
+    branches:
+      - codex/free-stack-multihorizon-20260927
+  workflow_dispatch:
+  schedule:
+    - cron: "17,47 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  public-data-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Run public data smoke checks
+        run: python -m apps.research.free_stack_smoke

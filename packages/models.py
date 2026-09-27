@@ -51,6 +51,7 @@ class Forecast:
     probability_up: Decimal
     calibration_score: Decimal
     confidence: Decimal
+    evidence_ids: FrozenSet[str] = field(default_factory=frozenset)
 
 @dataclass(frozen=True)
 class PortfolioState:

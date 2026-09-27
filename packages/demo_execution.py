@@ -1,8 +1,4 @@
-"""Demo-only order lifecycle orchestration with explicit UNKNOWN handling.
-
-This module never talks to a real broker. It defines the deterministic control flow
-that a broker adapter must satisfy before any live implementation is considered.
-"""
+"""Demo-only order lifecycle orchestration with explicit UNKNOWN handling."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,6 +19,9 @@ class SubmissionRequest:
     quantity: Decimal
     order_type: str
     limit_price: Decimal | None
+    stop_price: Decimal | None = None
+    target_price: Decimal | None = None
+    expires_at_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -84,6 +83,9 @@ class DemoOrderLifecycle:
                 quantity=intent.quantity,
                 order_type=intent.order_type,
                 limit_price=intent.limit_price,
+                stop_price=intent.stop_price,
+                target_price=intent.target_price,
+                expires_at_ms=intent.expires_at_ms,
             )
         )
         state = lifecycle_state(result, intent.quantity)

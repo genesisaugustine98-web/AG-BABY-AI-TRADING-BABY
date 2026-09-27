@@ -1,0 +1,19 @@
+{
+  "schema_version": "1",
+  "purpose": "provider-supplied rule configuration; never infer missing values",
+  "provider": "REPLACE_WITH_PROVIDER",
+  "account_type": "REPLACE_WITH_ACCOUNT_TYPE",
+  "verified_at_utc": null,
+  "rules": {
+    "daily_loss_limit_fraction": null,
+    "max_loss_limit_fraction": null,
+    "max_open_positions": null,
+    "min_trading_days": null,
+    "max_holding_seconds": null,
+    "overnight_allowed": null,
+    "weekend_allowed": null,
+    "ea_allowed": null
+  },
+  "source_url": null,
+  "fail_closed_when_unverified": true
+}

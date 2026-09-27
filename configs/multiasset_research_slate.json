@@ -1,0 +1,194 @@
+{
+  "research_window": {
+    "evaluation_start": "2015-01-01",
+    "evaluation_end": "2025-12-31",
+    "warmup_start": "2014-01-01",
+    "timezone": "UTC"
+  },
+  "principles": {
+    "status": "research_only",
+    "live_trading": false,
+    "selection_rule": "promote only after point-in-time validation, cost modeling, walk-forward testing, calibration checks, multiple-testing control, and demo execution validation",
+    "portfolio_rule": "combine signals only after risk normalization and correlation-aware exposure control",
+    "notes": "These are evidence-backed research candidates, not guaranteed profitable strategies or investment recommendations."
+  },
+  "asset_universe": {
+    "fx": [
+      "EURUSD",
+      "GBPUSD",
+      "USDJPY",
+      "USDCHF",
+      "USDCAD",
+      "AUDUSD",
+      "NZDUSD",
+      "EURGBP"
+    ],
+    "equity_indices": [
+      "S&P500",
+      "NASDAQ100",
+      "EUROSTOXX50",
+      "DAX",
+      "FTSE100",
+      "NIKKEI225",
+      "HANGSENG"
+    ],
+    "rates": [
+      "UST2Y",
+      "UST5Y",
+      "UST10Y",
+      "UST30Y",
+      "GER10Y",
+      "UK10Y",
+      "JGB10Y"
+    ],
+    "commodities": [
+      "WTI",
+      "BRENT",
+      "GOLD",
+      "SILVER",
+      "COPPER",
+      "NATGAS",
+      "CORN",
+      "WHEAT",
+      "SOYBEAN"
+    ],
+    "crypto_optional": [
+      "BTCUSD",
+      "ETHUSD"
+    ]
+  },
+  "strategies": [
+    {
+      "id": "cross_asset_tsmom",
+      "name": "Cross-Asset Time-Series Momentum",
+      "role": "core_alpha_candidate",
+      "families": ["trend_following", "time_series_momentum"],
+      "signal": "sign of each instrument's own trailing excess/total return",
+      "lookbacks_days": [21, 63, 126, 252],
+      "holding": "rebalance daily; signal can persist until reversal",
+      "sizing": "inverse-volatility normalized, portfolio risk capped",
+      "cost_inputs": ["spread", "commission", "slippage", "financing_or_roll"],
+      "guards": ["stale_data", "wide_spread", "broker_stress", "portfolio_drawdown", "event_blackout"],
+      "evidence_basis": "Documented across equity index, currency, commodity, and government bond futures with one-year signals and shorter-to-medium horizons."
+    },
+    {
+      "id": "cross_sectional_momentum",
+      "name": "Cross-Sectional Momentum",
+      "role": "core_alpha_candidate",
+      "families": ["momentum"],
+      "signal": "rank instruments by trailing risk-adjusted return within comparable asset buckets",
+      "lookbacks_days": [63, 126, 252],
+      "holding": "weekly or monthly rebalance",
+      "portfolio": "long upper quantile, short lower quantile where the instrument/broker permits; otherwise directional ranking sleeve",
+      "sizing": "volatility and beta neutralization before aggregation",
+      "cost_inputs": ["spread", "commission", "turnover", "slippage"],
+      "guards": ["minimum_cross_section_size", "stale_data", "liquidity_floor", "concentration_limit"],
+      "evidence_basis": "Momentum evidence extends across multiple markets and asset classes; the implementation must avoid look-ahead and excessive turnover."
+    },
+    {
+      "id": "multiasset_carry",
+      "name": "Multi-Asset Carry",
+      "role": "core_alpha_candidate",
+      "families": ["carry"],
+      "signal": "expected return from holding the asset assuming market conditions are otherwise unchanged",
+      "implementations": {
+        "fx": "forward points / interest differential",
+        "rates": "curve carry and roll-down",
+        "commodities": "term-structure carry / roll yield",
+        "equity_indices": "dividend and financing carry where robust data exists"
+      },
+      "holding": "monthly with turnover-aware refresh",
+      "sizing": "volatility normalized with crash-sensitive caps",
+      "cost_inputs": ["financing", "roll", "spread", "commission", "slippage"],
+      "guards": ["liquidity_floor", "curve_data_quality", "funding_stress", "global_loss_limit"],
+      "evidence_basis": "Carry has been documented across equities, bonds, currencies, commodities and related markets, with the important caveat that broad carry can suffer in global stress periods."
+    },
+    {
+      "id": "cross_asset_value",
+      "name": "Cross-Asset Value / Relative Mispricing",
+      "role": "core_research_candidate",
+      "families": ["value", "relative_value"],
+      "signal": "slow-moving valuation or relative-price deviation from a defined economic anchor",
+      "implementations": {
+        "fx": "PPP/real-exchange-rate deviation",
+        "rates": "real-yield and curve-relative valuation",
+        "commodities": "inventory/curve/long-run relative valuation where data quality supports it",
+        "equities": "fundamental valuation for broad equity universe, separate from index-only sleeve"
+      },
+      "holding": "multi-week to multi-month",
+      "sizing": "slow turnover, volatility normalized, strong exposure caps",
+      "guards": ["data_revision_control", "point_in_time_fundamentals", "structural_break_review", "liquidity_floor"],
+      "evidence_basis": "Value premia have been documented across several markets and asset classes, but implementation is much more data-sensitive than pure price-based trend."
+    },
+    {
+      "id": "defensive_low_risk",
+      "name": "Defensive / Low-Risk Allocation",
+      "role": "risk_and_alpha_candidate",
+      "families": ["defensive", "low_risk"],
+      "signal": "prefer lower-beta or lower-risk exposures within eligible cross sections",
+      "lookbacks_days": [63, 126, 252],
+      "holding": "monthly",
+      "portfolio": "beta-controlled or market-neutral where instrument access permits",
+      "sizing": "risk parity within sleeve; strict leverage ceiling",
+      "guards": ["beta_estimation_stability", "correlation_stability", "liquidity_floor", "leverage_limit"],
+      "evidence_basis": "Low-risk/betting-against-beta effects have been studied in equities and multiple asset classes; the construction is sensitive to leverage, beta estimation and financing assumptions."
+    },
+    {
+      "id": "short_horizon_mean_reversion",
+      "name": "Short-Horizon Mean Reversion",
+      "role": "tactical_alpha_candidate",
+      "families": ["mean_reversion", "reversal"],
+      "signal": "short-term standardized return or price dislocation that reverts after controlling for trend and volatility",
+      "lookbacks_days": [3, 5, 10, 20],
+      "holding": "intraday to several sessions",
+      "sizing": "small risk budget; volatility and spread adjusted",
+      "guards": ["trend_filter", "wide_spread", "news_event", "overnight_gap_risk", "liquidity_floor"],
+      "evidence_basis": "Used here as a hypothesis requiring rigorous cost and turnover testing; short-horizon effects are especially vulnerable to implementation friction."
+    },
+    {
+      "id": "volatility_targeting_overlay",
+      "name": "Portfolio Volatility Targeting",
+      "role": "portfolio_overlay",
+      "families": ["risk_control"],
+      "signal": "scale aggregate exposure inversely with forecast realized volatility",
+      "lookbacks_days": [20, 60],
+      "holding": "daily",
+      "target_annualized_volatility": [0.08, 0.10, 0.12],
+      "sizing": "cap-and-floor exposure multiplier; never overrides hard risk limits",
+      "guards": ["max_gross_exposure", "max_margin_usage", "drawdown_freeze"],
+      "evidence_basis": "A portfolio construction control rather than an alpha source; must be evaluated after costs and against pro-cyclical deleveraging risk."
+    },
+    {
+      "id": "regime_risk_overlay",
+      "name": "Market-Regime Risk Overlay",
+      "role": "risk_overlay",
+      "families": ["regime_detection", "risk_management"],
+      "signal": "detect abnormal volatility, correlation, liquidity, spread, event and broker states",
+      "inputs": ["realized_volatility", "cross_asset_correlation", "spread", "liquidity", "event_state", "broker_health", "data_health"],
+      "action": "reduce, block or freeze candidate orders; never create broker orders by itself",
+      "holding": "state-driven",
+      "guards": ["deterministic_hard_limits", "operator_freeze", "stale_data", "broker_stress"],
+      "evidence_basis": "Risk-control layer; deliberately separated from predictive alpha so it cannot silently manufacture signals."
+    }
+  ],
+  "validation_protocol": {
+    "must_use_point_in_time_data": true,
+    "walk_forward": true,
+    "purged_or_embargoed_validation_when_overlap_exists": true,
+    "transaction_cost_model_required": true,
+    "slippage_model_required": true,
+    "multiple_testing_control_required": true,
+    "calibration_checks_required": true,
+    "maximum_drawdown_check_required": true,
+    "stress_periods": [
+      "2015-2016 commodity/China stress",
+      "2018 Q4 risk-off",
+      "2020 COVID shock",
+      "2022 inflation/rates shock",
+      "2023 banking stress",
+      "2024-2025 regime transitions"
+    ],
+    "promotion_path": ["research", "paper", "demo", "promotion_review"],
+    "live_promotion": "disabled"
+  }
+}
