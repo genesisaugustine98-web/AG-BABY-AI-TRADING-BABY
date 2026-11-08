@@ -9,10 +9,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
+
+# Make the repository package root importable when this script is run by path.
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from apps.research.h10_ingest import (
     H10_DAILY_CSV_URL,
