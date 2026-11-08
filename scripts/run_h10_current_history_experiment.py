@@ -4,10 +4,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+# Make the repository package root importable when this script is run by path.
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from apps.research.experiment_runner import ResearchSplit, run_fixed_grid
 from apps.research.h10_current_history import parse_current_history_with_schedule
