@@ -8,4 +8,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - run: python -m pip install --upgrade pip pytest
+      - name: Check H.10 research scripts import without downloading data
+        run: |
+          python scripts/ingest_h10_current.py --help
+          python scripts/run_h10_current_history_experiment.py --help
       - run: python -m pytest -q
