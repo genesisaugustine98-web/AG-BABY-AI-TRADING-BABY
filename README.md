@@ -7,6 +7,7 @@ This repository is the canonical engineering control plane for an evidence-first
 ## Important status
 
 - This release targets **>=80% architectural coverage of the specified end-to-end system**, not 80% trading accuracy or profitability.
+- Historical research figures and coverage statements are repository-reported engineering evidence; they are not independent certification, live performance or an offer to manage money.
 - Live trading is intentionally disabled by architecture in this v2 scaffold.
 - The LLM has no execution credentials and no direct broker authority.
 - Unknown broker results cannot transition directly to retry.
@@ -52,3 +53,12 @@ A strategy is not promoted because it looks good in-sample. Require point-in-tim
 ## Sources / design basis
 
 See the companion cookbook and research volumes for the full evidence map. The architecture preserves the distinction between observed institutional mechanisms, empirical findings, engineering proposals and unverified claims.
+
+
+## Readiness and research boundaries
+
+- [Project readiness and evidence register](docs/PROJECT_READINESS.md)
+- [Risk and execution review](docs/RISK_REVIEW.md)
+- [H.10 research limitations](docs/H10_RESEARCH_LIMITATIONS.md)
+
+No live trading or funded-account use is authorised by the presence of code, passing tests or research outputs. This repository does not currently include a root licence file; reuse rights are therefore not granted by implication. The owner must choose and add a licence deliberately.
